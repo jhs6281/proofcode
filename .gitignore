@@ -1,0 +1,48 @@
+## private memo : 
+# | 항목             | 이유                                 |
+# | --------------- | ------------------------------       |
+# | `.venv/`        | Python 가상환경                       |
+# | `node_modules/` | npm이 설치한 라이브러리                 |
+# | `__pycache__/`  | Python 임시 실행 파일                  |
+# | `.env`          | API Key 같은 비밀정보                  |
+# | `out/`          | TypeScript를 JavaScript로 변환한 결과  |
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node / VS Code Extension
+node_modules/
+extension/out/
+extension/dist/
+*.vsix
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+!.env.example

@@ -1,0 +1,52 @@
+{
+  "name": "proofcode",
+  "displayName": "ProofCode",
+  "description": "Verify AI-generated code changes before developers approve them.",
+  "version": "0.1.0",
+  "publisher": "proofcode",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:proofcode.pingCore"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "proofcode.pingCore",
+        "title": "ProofCode: Ping Core"
+      }
+    ],
+    "configuration": {
+      "title": "ProofCode",
+      "properties": {
+        "proofcode.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python executable used to run ProofCode Core."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test:connection": "node scripts/test-connection.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.16.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}
