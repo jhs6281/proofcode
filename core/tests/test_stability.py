@@ -16,6 +16,7 @@ REQUIRED_COMMANDS = {
     "proofcode.openHotspot",
     "proofcode.inspectHotspot",
     "proofcode.verifyBaseline",
+    "proofcode.verifyCandidateFile",
 }
 
 
@@ -24,7 +25,7 @@ def repository_root() -> Path:
 
 
 def test_app_and_protocol_versions_are_separate() -> None:
-    assert APP_VERSION == "0.7.1"
+    assert APP_VERSION == "0.8.0"
     assert PROTOCOL_VERSION == "1"
     assert APP_VERSION != PROTOCOL_VERSION
 

@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify code changes with reproducible evidence before developers approve them.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -17,7 +17,8 @@
     "onCommand:proofcode.analyzeWorkspace",
     "onCommand:proofcode.openHotspot",
     "onCommand:proofcode.inspectHotspot",
-    "onCommand:proofcode.verifyBaseline"
+    "onCommand:proofcode.verifyBaseline",
+    "onCommand:proofcode.verifyCandidateFile"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -45,6 +46,10 @@
       {
         "command": "proofcode.verifyBaseline",
         "title": "ProofCode: Verify Baseline"
+      },
+      {
+        "command": "proofcode.verifyCandidateFile",
+        "title": "ProofCode: Verify Candidate File"
       }
     ],
     "configuration": {

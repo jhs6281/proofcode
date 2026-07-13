@@ -1,3 +1,5 @@
 """ProofCode Core package."""
 
-__version__ = "0.1.0"
+from proofcode_core.version import APP_VERSION
+
+__all__ = ["APP_VERSION"]

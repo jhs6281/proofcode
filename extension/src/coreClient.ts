@@ -124,6 +124,49 @@ export interface VerificationResult {
   baseline_message: string;
 }
 
+export interface PytestSummary {
+  passed: number;
+  failed: number;
+  skipped: number;
+  errors: number;
+  xfailed: number;
+  xpassed: number;
+}
+
+export interface CandidateVerificationResult {
+  verdict: "reviewable" | "failed" | "blocked";
+  passed: boolean;
+  timed_out: boolean;
+  exit_code: number | null;
+  duration_seconds: number;
+  baseline_duration_seconds: number;
+  duration_delta_seconds: number;
+  duration_ratio: number | null;
+  target_path: string;
+  target_relative_path: string;
+  candidate_path: string;
+  original_sha256: string;
+  candidate_sha256: string;
+  baseline_fingerprint: string;
+  original_fingerprint_before: string;
+  original_fingerprint_after: string;
+  isolated_fingerprint_before: string;
+  isolated_fingerprint_after: string;
+  original_workspace_changed_during_run: boolean;
+  isolated_workspace_changed_during_run: boolean;
+  command: string[];
+  working_directory: string;
+  interpreter_path: string;
+  baseline_summary: PytestSummary;
+  candidate_summary: PytestSummary;
+  stdout: string;
+  stderr: string;
+  evidence_saved: boolean;
+  evidence_path: string | null;
+  message: string;
+  security_scope: string;
+}
+
 export function resolvePythonPath(
   configuredPath: string,
   workspaceRoot: string
@@ -257,6 +300,24 @@ export class CoreClient {
     return this.run([
       "verify-workspace",
       this.workspaceRoot,
+      "--timeout",
+      "60"
+    ]);
+  }
+
+  public verifyCandidateFile(
+    targetFilePath: string,
+    candidateFilePath: string
+  ): Promise<
+    CoreEnvelope<{
+      candidate_verification: CandidateVerificationResult;
+    }>
+  > {
+    return this.run([
+      "verify-candidate",
+      this.workspaceRoot,
+      targetFilePath,
+      candidateFilePath,
       "--timeout",
       "60"
     ]);

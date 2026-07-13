@@ -6,13 +6,19 @@ import sys
 from typing import Sequence
 
 from proofcode_core.analyzer import analyze_file
-from proofcode_core.contract import error_payload, success_payload
+from proofcode_core.candidate import verify_candidate_file
+from proofcode_core.contract import (
+    error_payload,
+    success_payload,
+)
 from proofcode_core.verifier import verify_workspace
 from proofcode_core.workspace import analyze_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="proofcode-core")
+    parser = argparse.ArgumentParser(
+        prog="proofcode-core"
+    )
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
@@ -20,7 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("ping")
 
-    file_parser = subparsers.add_parser("analyze-file")
+    file_parser = subparsers.add_parser(
+        "analyze-file"
+    )
     file_parser.add_argument("file_path")
 
     workspace_parser = subparsers.add_parser(
@@ -51,6 +59,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=60,
     )
 
+    candidate_parser = subparsers.add_parser(
+        "verify-candidate"
+    )
+    candidate_parser.add_argument("workspace_path")
+    candidate_parser.add_argument("target_file_path")
+    candidate_parser.add_argument("candidate_file_path")
+    candidate_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+    )
+
     return parser
 
 
@@ -62,7 +82,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = success_payload(
                 "ping",
                 {
-                    "message": "ProofCode Core is running",
+                    "message": (
+                        "ProofCode Core is running"
+                    ),
                 },
             )
 
@@ -80,12 +102,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = success_payload(
                 "workspace_analysis",
                 {
-                    "workspace_analysis": analyze_workspace(
-                        args.workspace_path,
-                        hotspot_limit=args.hotspot_limit,
-                        include_tests=args.include_tests,
-                        include_examples=args.include_examples,
-                    ).to_dict(),
+                    "workspace_analysis": (
+                        analyze_workspace(
+                            args.workspace_path,
+                            hotspot_limit=(
+                                args.hotspot_limit
+                            ),
+                            include_tests=(
+                                args.include_tests
+                            ),
+                            include_examples=(
+                                args.include_examples
+                            ),
+                        ).to_dict()
+                    ),
                 },
             )
 
@@ -97,6 +127,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                         args.workspace_path,
                         timeout_seconds=args.timeout,
                     ).to_dict(),
+                },
+            )
+
+        elif args.command == "verify-candidate":
+            payload = success_payload(
+                "candidate_verification",
+                {
+                    "candidate_verification": (
+                        verify_candidate_file(
+                            workspace_path=(
+                                args.workspace_path
+                            ),
+                            target_file_path=(
+                                args.target_file_path
+                            ),
+                            candidate_file_path=(
+                                args.candidate_file_path
+                            ),
+                            timeout_seconds=args.timeout,
+                        ).to_dict()
+                    ),
                 },
             )
 

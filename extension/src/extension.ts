@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 
 import {
+  CandidateVerificationResult,
   CodeSymbol,
   CoreClient,
   FileAnalysis,
@@ -346,6 +347,143 @@ function formatVerificationReport(
 }
 
 
+
+function pytestSummaryText(
+  summary: CandidateVerificationResult["candidate_summary"]
+): string {
+  const parts: string[] = [];
+
+  if (summary.passed) {
+    parts.push(`${summary.passed} passed`);
+  }
+
+  if (summary.failed) {
+    parts.push(`${summary.failed} failed`);
+  }
+
+  if (summary.errors) {
+    parts.push(`${summary.errors} errors`);
+  }
+
+  if (summary.skipped) {
+    parts.push(`${summary.skipped} skipped`);
+  }
+
+  if (summary.xfailed) {
+    parts.push(`${summary.xfailed} xfailed`);
+  }
+
+  if (summary.xpassed) {
+    parts.push(`${summary.xpassed} xpassed`);
+  }
+
+  return parts.length > 0
+    ? parts.join(", ")
+    : "요약을 찾지 못함";
+}
+
+
+function truncateOutput(
+  text: string,
+  maximumLength = 12000
+): string {
+  if (text.length <= maximumLength) {
+    return text;
+  }
+
+  return (
+    text.slice(0, maximumLength)
+    + "\n... 출력이 길어 일부만 표시했습니다."
+  );
+}
+
+
+function formatCandidateReport(
+  result: CandidateVerificationResult
+): string {
+  const verdict = result.verdict === "reviewable"
+    ? "✅ 테스트 관점에서 검토 가능"
+    : result.verdict === "failed"
+      ? "❌ 테스트 실패"
+      : "⛔ 검증 중단";
+
+  const ratio = result.duration_ratio === null
+    ? "계산 불가"
+    : `${result.duration_ratio}배`;
+
+  return [
+    "# ProofCode Candidate Verification",
+    "",
+    "## 판정",
+    "",
+    `- 상태: **${verdict}**`,
+    `- 설명: ${result.message}`,
+    `- 원본 파일: \`${result.target_relative_path}\``,
+    `- 후보 파일: \`${result.candidate_path}\``,
+    `- 원본 SHA-256: \`${result.original_sha256}\``,
+    `- 후보 SHA-256: \`${result.candidate_sha256}\``,
+    "",
+    "## 테스트 비교",
+    "",
+    `- Baseline: ${pytestSummaryText(result.baseline_summary)}`,
+    `- Candidate: ${pytestSummaryText(result.candidate_summary)}`,
+    `- Baseline 실행 시간: ${result.baseline_duration_seconds}초`,
+    `- Candidate 실행 시간: ${result.duration_seconds}초`,
+    `- 시간 차이: ${result.duration_delta_seconds}초`,
+    `- 시간 비율: ${ratio}`,
+    "",
+    "> 한 번의 실행 시간 차이는 성능 개선의 증거가 아닙니다.",
+    "",
+    "## 격리 및 원본 보호",
+    "",
+    "- 후보 파일은 임시 Workspace 복사본에만 적용했습니다.",
+    `- 원본 Workspace 변경 감지: ${
+      result.original_workspace_changed_during_run
+        ? "예"
+        : "아니요"
+    }`,
+    `- 임시 소스 변경 감지: ${
+      result.isolated_workspace_changed_during_run
+        ? "예"
+        : "아니요"
+    }`,
+    `- 격리 범위: \`${result.security_scope}\``,
+    "",
+    "> 현재 격리는 임시 폴더 복사 방식입니다.",
+    "> 컨테이너 수준의 보안 Sandbox는 아직 아닙니다.",
+    "",
+    "## 실행 정보",
+    "",
+    `- 명령: \`${result.command.join(" ")}\``,
+    `- Python: \`${result.interpreter_path}\``,
+    `- 종료 코드: ${result.exit_code ?? "없음"}`,
+    `- 시간 초과: ${result.timed_out ? "예" : "아니요"}`,
+    `- Evidence 저장: ${result.evidence_saved ? "예" : "아니요"}`,
+    `- Evidence 경로: \`${result.evidence_path ?? "없음"}\``,
+    "",
+    "## 표준 출력",
+    "",
+    "```text",
+    truncateOutput(result.stdout.trim() || "(출력 없음)"),
+    "```",
+    "",
+    "## 오류 출력",
+    "",
+    "```text",
+    truncateOutput(result.stderr.trim() || "(출력 없음)"),
+    "```",
+    "",
+    "## 개발자 결정",
+    "",
+    "- Apply: 후보를 직접 검토한 뒤 개발자가 적용",
+    "- Hold: 추가 테스트나 Benchmark 후 보류",
+    "- Reject: 실패 또는 근거 부족으로 폐기",
+    "",
+    "> ProofCode는 후보 파일을 원본에 자동 적용하지 않습니다."
+  ].join("\n");
+}
+
+
 async function showMarkdown(
   content: string
 ): Promise<void> {
@@ -662,13 +800,103 @@ export function activate(
       }
     );
 
+
+  const verifyCandidateCommand =
+    vscode.commands.registerCommand(
+      "proofcode.verifyCandidateFile",
+      async () => {
+        const editor = vscode.window.activeTextEditor;
+
+        if (!editor || editor.document.isUntitled) {
+          void vscode.window.showWarningMessage(
+            "후보가 대체할 원본 코드 파일을 먼저 열어주세요."
+          );
+          return;
+        }
+
+        const targetPath = editor.document.uri.fsPath;
+        const extensionName = targetPath
+          .split(".")
+          .pop();
+
+        const selected = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          title: "검증할 후보 파일 선택",
+          openLabel: "후보 파일 선택",
+          filters: extensionName
+            ? {
+                "같은 확장자": [extensionName],
+                "모든 파일": ["*"]
+              }
+            : undefined
+        });
+
+        const candidateUri = selected?.[0];
+
+        if (!candidateUri) {
+          return;
+        }
+
+        try {
+          const response = await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "ProofCode Candidate 검증 중…",
+              cancellable: false
+            },
+            () => createClient().verifyCandidateFile(
+              targetPath,
+              candidateUri.fsPath
+            )
+          );
+
+          const result =
+            response.data?.candidate_verification;
+
+          if (!result) {
+            throw new Error(
+              "Candidate 검증 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatCandidateReport(result)
+          );
+
+          const selection =
+            await vscode.window.showInformationMessage(
+              result.verdict === "reviewable"
+                ? "Candidate가 테스트를 통과했습니다."
+                : "Candidate 검증 결과를 확인하세요.",
+              "Diff 열기"
+            );
+
+          if (selection === "Diff 열기") {
+            await vscode.commands.executeCommand(
+              "vscode.diff",
+              vscode.Uri.file(targetPath),
+              candidateUri,
+              `ProofCode Candidate: ${result.target_relative_path}`
+            );
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Candidate 검증 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
   context.subscriptions.push(
     pingCommand,
     analyzeFileCommand,
     analyzeWorkspaceCommand,
     openHotspotCommand,
     inspectHotspotCommand,
-    verifyBaselineCommand
+    verifyBaselineCommand,
+    verifyCandidateCommand
   );
 }
 

@@ -28,7 +28,8 @@ const requiredCommands = [
   "proofcode.analyzeWorkspace",
   "proofcode.openHotspot",
   "proofcode.inspectHotspot",
-  "proofcode.verifyBaseline"
+  "proofcode.verifyBaseline",
+  "proofcode.verifyCandidateFile"
 ];
 
 const contributed = new Set(
