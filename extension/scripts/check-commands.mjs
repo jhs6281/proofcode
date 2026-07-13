@@ -29,7 +29,9 @@ const requiredCommands = [
   "proofcode.openHotspot",
   "proofcode.inspectHotspot",
   "proofcode.verifyBaseline",
-  "proofcode.verifyCandidateFile"
+  "proofcode.verifyCandidateFile",
+  "proofcode.recordCandidateDecision",
+  "proofcode.viewDecisionHistory"
 ];
 
 const contributed = new Set(

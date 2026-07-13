@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify code changes with reproducible evidence before developers approve them.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -18,7 +18,9 @@
     "onCommand:proofcode.openHotspot",
     "onCommand:proofcode.inspectHotspot",
     "onCommand:proofcode.verifyBaseline",
-    "onCommand:proofcode.verifyCandidateFile"
+    "onCommand:proofcode.verifyCandidateFile",
+    "onCommand:proofcode.recordCandidateDecision",
+    "onCommand:proofcode.viewDecisionHistory"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -50,6 +52,14 @@
       {
         "command": "proofcode.verifyCandidateFile",
         "title": "ProofCode: Verify Candidate File"
+      },
+      {
+        "command": "proofcode.recordCandidateDecision",
+        "title": "ProofCode: Record Candidate Decision"
+      },
+      {
+        "command": "proofcode.viewDecisionHistory",
+        "title": "ProofCode: View Decision History"
       }
     ],
     "configuration": {

@@ -11,6 +11,12 @@ from proofcode_core.contract import (
     error_payload,
     success_payload,
 )
+from proofcode_core.decision import (
+    list_candidate_evidence,
+    list_decisions,
+    read_decision,
+    record_candidate_decision,
+)
 from proofcode_core.verifier import verify_workspace
 from proofcode_core.workspace import analyze_workspace
 
@@ -70,6 +76,36 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=60,
     )
+
+    evidence_parser = subparsers.add_parser(
+        "list-candidate-evidence"
+    )
+    evidence_parser.add_argument("workspace_path")
+
+    record_parser = subparsers.add_parser(
+        "record-decision"
+    )
+    record_parser.add_argument("workspace_path")
+    record_parser.add_argument("evidence_path")
+    record_parser.add_argument(
+        "decision",
+        choices=("apply", "hold", "reject"),
+    )
+    record_parser.add_argument(
+        "--reason",
+        required=True,
+    )
+
+    decisions_parser = subparsers.add_parser(
+        "list-decisions"
+    )
+    decisions_parser.add_argument("workspace_path")
+
+    read_decision_parser = subparsers.add_parser(
+        "read-decision"
+    )
+    read_decision_parser.add_argument("workspace_path")
+    read_decision_parser.add_argument("decision_path")
 
     return parser
 
@@ -146,6 +182,68 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 args.candidate_file_path
                             ),
                             timeout_seconds=args.timeout,
+                        ).to_dict()
+                    ),
+                },
+            )
+
+        elif args.command == "list-candidate-evidence":
+            payload = success_payload(
+                "candidate_evidence_list",
+                {
+                    "candidate_evidence": [
+                        item.to_dict()
+                        for item in list_candidate_evidence(
+                            args.workspace_path
+                        )
+                    ],
+                },
+            )
+
+        elif args.command == "record-decision":
+            payload = success_payload(
+                "developer_decision",
+                {
+                    "developer_decision": (
+                        record_candidate_decision(
+                            workspace_path=(
+                                args.workspace_path
+                            ),
+                            evidence_path=(
+                                args.evidence_path
+                            ),
+                            decision=args.decision,
+                            reason=args.reason,
+                        ).to_dict()
+                    ),
+                },
+            )
+
+        elif args.command == "list-decisions":
+            payload = success_payload(
+                "decision_list",
+                {
+                    "decisions": [
+                        item.to_dict()
+                        for item in list_decisions(
+                            args.workspace_path
+                        )
+                    ],
+                },
+            )
+
+        elif args.command == "read-decision":
+            payload = success_payload(
+                "developer_decision",
+                {
+                    "developer_decision": (
+                        read_decision(
+                            workspace_path=(
+                                args.workspace_path
+                            ),
+                            decision_path=(
+                                args.decision_path
+                            ),
                         ).to_dict()
                     ),
                 },

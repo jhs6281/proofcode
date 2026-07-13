@@ -3,8 +3,12 @@ import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 
 import {
+  CandidateEvidenceSummary,
   CandidateVerificationResult,
   CodeSymbol,
+  DecisionRecord,
+  DecisionSummary,
+  DeveloperDecision,
   CoreClient,
   FileAnalysis,
   Hotspot,
@@ -484,6 +488,120 @@ function formatCandidateReport(
 }
 
 
+
+function decisionLabel(
+  decision: DeveloperDecision
+): string {
+  if (decision === "apply") {
+    return "Apply";
+  }
+
+  if (decision === "hold") {
+    return "Hold";
+  }
+
+  return "Reject";
+}
+
+
+function verdictLabel(verdict: string): string {
+  if (verdict === "reviewable") {
+    return "검토 가능";
+  }
+
+  if (verdict === "failed") {
+    return "테스트 실패";
+  }
+
+  return "검증 중단";
+}
+
+
+function formatDecisionReport(
+  record: DecisionRecord
+): string {
+  const context = record.workspace_matches_candidate_context
+    ? "일치"
+    : "불일치";
+
+  return [
+    "# ProofCode Developer Decision",
+    "",
+    "## 결정",
+    "",
+    `- 선택: **${decisionLabel(record.decision)}**`,
+    `- 이유: ${record.reason}`,
+    `- 기록 시각: ${record.created_at_utc}`,
+    `- Decision ID: \`${record.decision_id}\``,
+    "",
+    "## 연결된 Candidate Evidence",
+    "",
+    `- 대상 파일: \`${record.target_relative_path}\``,
+    `- Candidate: \`${record.candidate_path}\``,
+    `- Candidate SHA-256: \`${record.candidate_sha256}\``,
+    `- 원래 판정: ${verdictLabel(record.source_verdict)}`,
+    `- 테스트 통과: ${record.source_passed ? "예" : "아니요"}`,
+    `- Evidence SHA-256: \`${record.candidate_evidence_sha256}\``,
+    `- Evidence 경로: \`${record.candidate_evidence_path}\``,
+    "",
+    "## 결정 시점의 안전 확인",
+    "",
+    `- Workspace와 검증 시점 일치: **${context}**`,
+    `- 현재 Workspace 지문: \`${record.workspace_fingerprint}\``,
+    `- Candidate 검증 지문: \`${record.candidate_context_fingerprint}\``,
+    "",
+    "## 코드 적용 상태",
+    "",
+    `- 자동 코드 변경: ${
+      record.automatic_code_change_performed
+        ? "실행됨"
+        : "실행하지 않음"
+    }`,
+    `- Apply 방식: \`${record.apply_mode}\``,
+    "",
+    "> Apply는 '수동 적용을 승인했다'는 결정 기록입니다.",
+    "> ProofCode가 원본 코드를 자동으로 바꾸었다는 뜻이 아닙니다.",
+    "",
+    `- 저장 경로: \`${record.decision_path}\``
+  ].join("\n");
+}
+
+
+function formatDecisionSummaryReport(
+  summary: DecisionSummary
+): string {
+  return [
+    "# ProofCode Decision History",
+    "",
+    `- 선택: **${decisionLabel(summary.decision)}**`,
+    `- 이유: ${summary.reason}`,
+    `- 대상 파일: \`${summary.target_relative_path}\``,
+    `- Candidate SHA-256: \`${summary.candidate_sha256}\``,
+    `- 원래 판정: ${verdictLabel(summary.source_verdict)}`,
+    `- 검증 시점과 Workspace 일치: ${
+      summary.workspace_matches_candidate_context
+        ? "예"
+        : "아니요"
+    }`,
+    `- 기록 시각: ${summary.created_at_utc}`,
+    `- Decision ID: \`${summary.decision_id}\``,
+    `- 저장 경로: \`${summary.decision_path}\``,
+    "",
+    "> 자세한 원본 기록은 위 JSON 파일에 저장되어 있습니다."
+  ].join("\n");
+}
+
+
+function evidenceQuickPickLabel(
+  evidence: CandidateEvidenceSummary
+): string {
+  return (
+    `${verdictLabel(evidence.verdict)} · `
+    + evidence.target_relative_path
+  );
+}
+
+
 async function showMarkdown(
   content: string
 ): Promise<void> {
@@ -889,6 +1007,212 @@ export function activate(
       }
     );
 
+
+  const recordDecisionCommand =
+    vscode.commands.registerCommand(
+      "proofcode.recordCandidateDecision",
+      async () => {
+        try {
+          const response =
+            await createClient().listCandidateEvidence();
+          const evidenceList =
+            response.data?.candidate_evidence ?? [];
+
+          if (evidenceList.length === 0) {
+            void vscode.window.showInformationMessage(
+              "기록할 Candidate Evidence가 없습니다. " +
+              "먼저 Candidate 파일을 검증하세요."
+            );
+            return;
+          }
+
+          const selectedEvidence =
+            await vscode.window.showQuickPick(
+              evidenceList.map((evidence) => ({
+                label: evidenceQuickPickLabel(evidence),
+                description:
+                  evidence.created_at_utc || "시간 정보 없음",
+                detail:
+                  `${evidence.message} · ` +
+                  `SHA ${evidence.candidate_sha256.slice(0, 12)}`,
+                evidence
+              })),
+              {
+                title: "결정할 Candidate Evidence 선택",
+                placeHolder:
+                  "Apply / Hold / Reject를 기록할 결과를 선택하세요.",
+                matchOnDescription: true,
+                matchOnDetail: true
+              }
+            );
+
+          if (!selectedEvidence) {
+            return;
+          }
+
+          const evidence = selectedEvidence.evidence;
+          const choices: Array<{
+            label: string;
+            description: string;
+            decision: DeveloperDecision;
+          }> = [];
+
+          if (
+            evidence.verdict === "reviewable"
+            && evidence.passed
+          ) {
+            choices.push({
+              label: "Apply",
+              description:
+                "수동 적용 승인으로 기록하며 코드는 바꾸지 않습니다.",
+              decision: "apply"
+            });
+          }
+
+          choices.push(
+            {
+              label: "Hold",
+              description:
+                "추가 Benchmark 또는 검토가 필요해 보류합니다.",
+              decision: "hold"
+            },
+            {
+              label: "Reject",
+              description:
+                "근거 부족 또는 실패로 후보를 거절합니다.",
+              decision: "reject"
+            }
+          );
+
+          const selectedDecision =
+            await vscode.window.showQuickPick(
+              choices,
+              {
+                title: "개발자 결정 선택",
+                placeHolder:
+                  "최종 결정은 개발자가 선택합니다."
+              }
+            );
+
+          if (!selectedDecision) {
+            return;
+          }
+
+          const reason = await vscode.window.showInputBox({
+            title:
+              `${selectedDecision.label} 결정 이유`,
+            prompt:
+              "Evidence를 보고 판단한 이유를 기록하세요.",
+            placeHolder:
+              "예: 테스트는 통과했지만 반복 Benchmark가 필요함",
+            ignoreFocusOut: true,
+            validateInput: (value) =>
+              value.trim()
+                ? undefined
+                : "결정 이유를 입력해야 합니다."
+          });
+
+          if (reason === undefined) {
+            return;
+          }
+
+          const recordResponse =
+            await createClient().recordCandidateDecision(
+              evidence.evidence_path,
+              selectedDecision.decision,
+              reason
+            );
+          const record =
+            recordResponse.data?.developer_decision;
+
+          if (!record) {
+            throw new Error(
+              "Developer Decision 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatDecisionReport(record)
+          );
+
+          void vscode.window.showInformationMessage(
+            `${selectedDecision.label} 결정이 기록되었습니다. ` +
+            "원본 코드는 변경하지 않았습니다."
+          );
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Decision 기록 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
+  const viewDecisionHistoryCommand =
+    vscode.commands.registerCommand(
+      "proofcode.viewDecisionHistory",
+      async () => {
+        try {
+          const response =
+            await createClient().listDecisions();
+          const decisions =
+            response.data?.decisions ?? [];
+
+          if (decisions.length === 0) {
+            void vscode.window.showInformationMessage(
+              "저장된 Developer Decision이 없습니다."
+            );
+            return;
+          }
+
+          const selected =
+            await vscode.window.showQuickPick(
+              decisions.map((decision) => ({
+                label:
+                  `${decisionLabel(decision.decision)} · ` +
+                  decision.target_relative_path,
+                description: decision.created_at_utc,
+                detail: decision.reason,
+                decision
+              })),
+              {
+                title: "ProofCode Decision History",
+                placeHolder:
+                  "확인할 Developer Decision을 선택하세요.",
+                matchOnDescription: true,
+                matchOnDetail: true
+              }
+            );
+
+          if (!selected) {
+            return;
+          }
+
+          const detailResponse =
+            await createClient().readDecision(
+              selected.decision.decision_path
+            );
+          const record =
+            detailResponse.data?.developer_decision;
+
+          if (record) {
+            await showMarkdown(
+              formatDecisionReport(record)
+            );
+          } else {
+            await showMarkdown(
+              formatDecisionSummaryReport(
+                selected.decision
+              )
+            );
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Decision History 확인 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
   context.subscriptions.push(
     pingCommand,
     analyzeFileCommand,
@@ -896,7 +1220,9 @@ export function activate(
     openHotspotCommand,
     inspectHotspotCommand,
     verifyBaselineCommand,
-    verifyCandidateCommand
+    verifyCandidateCommand,
+    recordDecisionCommand,
+    viewDecisionHistoryCommand
   );
 }
 

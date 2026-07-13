@@ -167,6 +167,51 @@ export interface CandidateVerificationResult {
   security_scope: string;
 }
 
+export type DeveloperDecision = "apply" | "hold" | "reject";
+
+export interface CandidateEvidenceSummary {
+  evidence_path: string;
+  created_at_utc: string;
+  verdict: "reviewable" | "failed" | "blocked";
+  passed: boolean;
+  target_relative_path: string;
+  candidate_path: string;
+  candidate_sha256: string;
+  message: string;
+}
+
+export interface DecisionRecord {
+  decision_id: string;
+  decision: DeveloperDecision;
+  reason: string;
+  created_at_utc: string;
+  decision_path: string;
+  candidate_evidence_path: string;
+  candidate_evidence_sha256: string;
+  source_verdict: string;
+  source_passed: boolean;
+  target_relative_path: string;
+  candidate_path: string;
+  candidate_sha256: string;
+  workspace_fingerprint: string;
+  candidate_context_fingerprint: string;
+  workspace_matches_candidate_context: boolean;
+  automatic_code_change_performed: boolean;
+  apply_mode: string;
+}
+
+export interface DecisionSummary {
+  decision_id: string;
+  decision: DeveloperDecision;
+  reason: string;
+  created_at_utc: string;
+  decision_path: string;
+  target_relative_path: string;
+  candidate_sha256: string;
+  source_verdict: string;
+  workspace_matches_candidate_context: boolean;
+}
+
 export function resolvePythonPath(
   configuredPath: string,
   workspaceRoot: string
@@ -320,6 +365,57 @@ export class CoreClient {
       candidateFilePath,
       "--timeout",
       "60"
+    ]);
+  }
+
+  public listCandidateEvidence(): Promise<
+    CoreEnvelope<{
+      candidate_evidence: CandidateEvidenceSummary[];
+    }>
+  > {
+    return this.run([
+      "list-candidate-evidence",
+      this.workspaceRoot
+    ]);
+  }
+
+  public recordCandidateDecision(
+    evidencePath: string,
+    decision: DeveloperDecision,
+    reason: string
+  ): Promise<
+    CoreEnvelope<{
+      developer_decision: DecisionRecord;
+    }>
+  > {
+    return this.run([
+      "record-decision",
+      this.workspaceRoot,
+      evidencePath,
+      decision,
+      "--reason",
+      reason
+    ]);
+  }
+
+  public listDecisions(): Promise<
+    CoreEnvelope<{ decisions: DecisionSummary[] }>
+  > {
+    return this.run([
+      "list-decisions",
+      this.workspaceRoot
+    ]);
+  }
+
+  public readDecision(
+    decisionPath: string
+  ): Promise<
+    CoreEnvelope<{ developer_decision: DecisionRecord }>
+  > {
+    return this.run([
+      "read-decision",
+      this.workspaceRoot,
+      decisionPath
     ]);
   }
 
