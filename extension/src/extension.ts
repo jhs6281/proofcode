@@ -1,185 +1,121 @@
 import * as vscode from "vscode";
 import {
-  CodeSymbol,
-  CoreAnalyzeFileResponse,
-  CoreClient
+  CoreAnalyzeWorkspaceResponse,
+  CoreClient,
+  Hotspot
 } from "./coreClient";
 
-function createCoreClient(): CoreClient {
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-  if (!workspaceRoot) {
-    throw new Error(
-      "ProofCode 저장소 폴더를 먼저 VS Code에서 열어주세요."
-    );
+function getWorkspaceRoot(): string {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!root) {
+    throw new Error("ProofCode 저장소 폴더를 먼저 열어주세요.");
   }
-
-  const configuration = vscode.workspace.getConfiguration("proofcode");
-  const pythonPath = configuration.get<string>("pythonPath", "python");
-
-  return new CoreClient({ pythonPath, workspaceRoot });
+  return root;
 }
 
-function formatSymbol(symbol: CodeSymbol): string {
-  const parameters = symbol.parameters.length > 0
-    ? symbol.parameters.join(", ")
-    : "없음";
+function createCoreClient(): CoreClient {
+  const config = vscode.workspace.getConfiguration("proofcode");
+  const pythonPath = config.get<string>("pythonPath", "python");
 
-  const complexity = symbol.complexity === null
-    ? "해당 없음"
-    : String(symbol.complexity);
-
-  return [
-    `### ${symbol.name}`,
-    "",
-    `- 종류: ${symbol.symbol_type}`,
-    `- 위치: ${symbol.line_start}~${symbol.line_end}줄`,
-    `- 길이: ${symbol.line_count}줄`,
-    `- 매개변수: ${parameters}`,
-    `- 복잡도: ${complexity}`,
-    ""
-  ].join("\n");
+  return new CoreClient({
+    pythonPath,
+    workspaceRoot: getWorkspaceRoot()
+  });
 }
 
-function formatAnalysis(result: CoreAnalyzeFileResponse): string {
-  const analysis = result.analysis;
-  const structure = analysis.structure;
+function hotspotRiskLabel(hotspot: Hotspot): string {
+  if (hotspot.complexity >= 10) return "높음";
+  if (hotspot.complexity >= 6) return "중간";
+  return "낮음";
+}
 
-  const sections: string[] = [
-    "# ProofCode File Analysis",
+function formatWorkspaceAnalysis(
+  result: CoreAnalyzeWorkspaceResponse
+): string {
+  const analysis = result.workspace_analysis;
+  const lines: string[] = [
+    "# ProofCode Workspace Analysis",
     "",
-    "## 기본 정보",
+    "## 프로젝트 요약",
     "",
-    `- **File:** ${analysis.file_name}`,
-    `- **Language:** ${analysis.language}`,
-    `- **Size:** ${analysis.size_bytes} bytes`,
-    `- **Total lines:** ${analysis.total_lines}`,
-    `- **Non-empty lines:** ${analysis.non_empty_lines}`,
-    `- **Empty lines:** ${analysis.empty_lines}`,
-    `- **SHA-256:** \`${analysis.sha256}\``,
+    `- 분석 경로: \`${analysis.workspace_path}\``,
+    `- 분석한 소스 파일: ${analysis.scanned_files}개`,
+    `- 구조 분석 지원 파일: ${analysis.supported_structure_files}개`,
+    `- 전체 코드 줄 수: ${analysis.total_lines}`,
+    `- 전체 클래스 수: ${analysis.total_classes}`,
+    `- 전체 함수/메서드 수: ${analysis.total_functions}`,
+    "",
+    "## 복잡도 우선 확인 후보",
     ""
   ];
 
-  if (!structure.supported) {
-    sections.push(
-      "## 코드 구조",
-      "",
-      `현재 ${analysis.language} 구조 분석은 아직 지원하지 않습니다.`,
-      "",
-      "> 이번 단계에서는 Python AST 분석만 지원합니다."
-    );
-
-    return sections.join("\n");
+  if (analysis.hotspots.length === 0) {
+    lines.push("> 분석 가능한 Python 함수가 없습니다.");
+    return lines.join("\n");
   }
 
-  sections.push(
-    "## 코드 구조",
+  analysis.hotspots.forEach((hotspot, index) => {
+    lines.push(
+      `### ${index + 1}. ${hotspot.symbol_name}`,
+      "",
+      `- 파일: \`${hotspot.file_name}\``,
+      `- 위치: ${hotspot.line_start}~${hotspot.line_end}줄`,
+      `- 길이: ${hotspot.line_count}줄`,
+      `- 복잡도: ${hotspot.complexity}`,
+      `- 단순 위험 표시: ${hotspotRiskLabel(hotspot)}`,
+      ""
+    );
+  });
+
+  lines.push(
+    "---",
     "",
-    `- Parser: ${structure.parser}`,
-    `- 발견한 구조: ${structure.total_symbols}개`,
-    `- 클래스: ${structure.classes.length}개`,
-    `- 함수/메서드: ${structure.functions.length}개`,
-    ""
+    "> 이 순위는 나쁜 코드 순위가 아닙니다.",
+    "> 먼저 검토할 가치가 있는 후보를 보여줍니다.",
+    "> 아직 AI 추천이나 실제 성능 측정은 포함하지 않습니다."
   );
 
-  if (structure.classes.length > 0) {
-    sections.push("## 클래스", "");
-    for (const item of structure.classes) {
-      sections.push(formatSymbol(item));
-    }
-  }
+  return lines.join("\n");
+}
 
-  if (structure.functions.length > 0) {
-    sections.push("## 함수와 메서드", "");
-    for (const item of structure.functions) {
-      sections.push(formatSymbol(item));
-    }
-  }
+async function showMarkdown(content: string): Promise<void> {
+  const document = await vscode.workspace.openTextDocument({
+    language: "markdown",
+    content
+  });
 
-  if (structure.total_symbols === 0) {
-    sections.push(
-      "> 이 Python 파일에서는 클래스나 함수를 찾지 못했습니다."
-    );
-  }
-
-  sections.push(
-    "",
-    "> 복잡도는 조건문과 반복문이 많아질수록 증가하는 간단한 학습용 값입니다."
+  await vscode.window.showTextDocument(
+    document,
+    vscode.ViewColumn.Beside,
+    true
   );
-
-  return sections.join("\n");
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const pingCommand = vscode.commands.registerCommand(
-    "proofcode.pingCore",
+  const analyzeWorkspaceCommand = vscode.commands.registerCommand(
+    "proofcode.analyzeWorkspace",
     async () => {
-      try {
-        const response = await createCoreClient().ping();
-
-        void vscode.window.showInformationMessage(
-          `${response.message} (protocol ${response.protocol_version})`
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        void vscode.window.showErrorMessage(
-          `ProofCode Core 연결 실패: ${message}`
-        );
-      }
-    }
-  );
-
-  const analyzeFileCommand = vscode.commands.registerCommand(
-    "proofcode.analyzeCurrentFile",
-    async () => {
-      const editor = vscode.window.activeTextEditor;
-
-      if (!editor) {
-        void vscode.window.showWarningMessage(
-          "분석할 코드 파일을 먼저 열어주세요."
-        );
-        return;
-      }
-
-      if (editor.document.isUntitled) {
-        void vscode.window.showWarningMessage(
-          "분석 전에 파일을 먼저 저장해주세요."
-        );
-        return;
-      }
-
       try {
         const response = await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: "현재 파일 구조 분석 중…",
+            title: "ProofCode 프로젝트 전체 분석 중…",
             cancellable: false
           },
-          () => createCoreClient().analyzeFile(
-            editor.document.uri.fsPath
-          )
+          () => createCoreClient().analyzeWorkspace(getWorkspaceRoot())
         );
 
-        const document = await vscode.workspace.openTextDocument({
-          language: "markdown",
-          content: formatAnalysis(response)
-        });
-
-        await vscode.window.showTextDocument(
-          document,
-          vscode.ViewColumn.Beside,
-          true
-        );
+        await showMarkdown(formatWorkspaceAnalysis(response));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        void vscode.window.showErrorMessage(`파일 분석 실패: ${message}`);
+        void vscode.window.showErrorMessage(
+          `프로젝트 분석 실패: ${message}`
+        );
       }
     }
   );
 
-  context.subscriptions.push(pingCommand, analyzeFileCommand);
+  context.subscriptions.push(analyzeWorkspaceCommand);
 }
 
-export function deactivate(): void {
-  // 현재 단계에서는 종료할 장기 실행 프로세스가 없습니다.
-}
+export function deactivate(): void {}

@@ -43,6 +43,34 @@ export interface CoreAnalyzeFileResponse {
   analysis: FileAnalysis;
 }
 
+export interface Hotspot {
+  file_path: string;
+  file_name: string;
+  symbol_name: string;
+  symbol_type: string;
+  line_start: number;
+  line_end: number;
+  line_count: number;
+  complexity: number;
+}
+
+export interface WorkspaceAnalysis {
+  workspace_path: string;
+  scanned_files: number;
+  supported_structure_files: number;
+  total_lines: number;
+  total_classes: number;
+  total_functions: number;
+  hotspots: Hotspot[];
+  files: FileAnalysis[];
+}
+
+export interface CoreAnalyzeWorkspaceResponse {
+  status: "ok";
+  protocol_version: string;
+  workspace_analysis: WorkspaceAnalysis;
+}
+
 export interface CoreClientOptions {
   pythonPath: string;
   workspaceRoot: string;
@@ -57,7 +85,7 @@ export class CoreClient {
   public constructor(options: CoreClientOptions) {
     this.pythonPath = options.pythonPath;
     this.workspaceRoot = options.workspaceRoot;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   public ping(): Promise<CorePingResponse> {
@@ -66,8 +94,15 @@ export class CoreClient {
 
   public analyzeFile(filePath: string): Promise<CoreAnalyzeFileResponse> {
     return this.runCoreCommand<CoreAnalyzeFileResponse>([
-      "analyze-file",
-      filePath
+      "analyze-file", filePath
+    ]);
+  }
+
+  public analyzeWorkspace(
+    workspacePath: string
+  ): Promise<CoreAnalyzeWorkspaceResponse> {
+    return this.runCoreCommand<CoreAnalyzeWorkspaceResponse>([
+      "analyze-workspace", workspacePath, "--hotspot-limit", "10"
     ]);
   }
 
@@ -103,7 +138,7 @@ export class CoreClient {
     let stderr = "";
     let settled = false;
 
-    const finishWithError = (error: Error): void => {
+    const fail = (error: Error): void => {
       if (!settled) {
         settled = true;
         reject(error);
@@ -112,53 +147,25 @@ export class CoreClient {
 
     const timer = setTimeout(() => {
       child.kill();
-      finishWithError(
-        new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`)
-      );
+      fail(new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`));
     }, this.timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
 
     child.on("error", (error) => {
       clearTimeout(timer);
-      finishWithError(
-        new Error(
-          `Could not start Python process "${this.pythonPath}": ${error.message}`
-        )
-      );
+      fail(new Error(`Could not start Python: ${error.message}`));
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
-
-      if (settled) {
-        return;
-      }
+      if (settled) return;
 
       if (code !== 0) {
-        let message = stderr.trim();
-
-        try {
-          const payload = JSON.parse(message) as {
-            error?: { message?: string };
-          };
-          message = payload.error?.message ?? message;
-        } catch {
-          // JSON이 아니라면 stderr 원문을 사용합니다.
-        }
-
-        finishWithError(
-          new Error(`ProofCode Core exited with code ${code}. ${message}`)
-        );
+        fail(new Error(`ProofCode Core exited with code ${code}. ${stderr.trim()}`));
         return;
       }
 
@@ -167,11 +174,7 @@ export class CoreClient {
         resolve(JSON.parse(stdout.trim()) as T);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        finishWithError(
-          new Error(
-            `ProofCode Core returned invalid JSON: ${reason}\n${stdout}`
-          )
-        );
+        fail(new Error(`ProofCode Core returned invalid JSON: ${reason}`));
       }
     });
   }

@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify AI-generated code changes before developers approve them.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -12,19 +12,14 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:proofcode.pingCore",
-    "onCommand:proofcode.analyzeCurrentFile"
+    "onCommand:proofcode.analyzeWorkspace"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "proofcode.pingCore",
-        "title": "ProofCode: Ping Core"
-      },
-      {
-        "command": "proofcode.analyzeCurrentFile",
-        "title": "ProofCode: Analyze Current File"
+        "command": "proofcode.analyzeWorkspace",
+        "title": "ProofCode: Analyze Workspace"
       }
     ],
     "configuration": {
