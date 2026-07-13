@@ -1,8 +1,8 @@
 {
   "name": "proofcode",
   "displayName": "ProofCode",
-  "description": "Verify AI-generated code changes before developers approve them.",
-  "version": "0.6.0",
+  "description": "Verify code changes with reproducible evidence before developers approve them.",
+  "version": "0.7.1",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -12,19 +12,39 @@
     "Other"
   ],
   "activationEvents": [
+    "onCommand:proofcode.pingCore",
+    "onCommand:proofcode.analyzeCurrentFile",
     "onCommand:proofcode.analyzeWorkspace",
-    "onCommand:proofcode.inspectHotspot"
+    "onCommand:proofcode.openHotspot",
+    "onCommand:proofcode.inspectHotspot",
+    "onCommand:proofcode.verifyBaseline"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
+        "command": "proofcode.pingCore",
+        "title": "ProofCode: Ping Core"
+      },
+      {
+        "command": "proofcode.analyzeCurrentFile",
+        "title": "ProofCode: Analyze Current File"
+      },
+      {
         "command": "proofcode.analyzeWorkspace",
         "title": "ProofCode: Analyze Workspace"
       },
       {
+        "command": "proofcode.openHotspot",
+        "title": "ProofCode: Open Hotspot"
+      },
+      {
         "command": "proofcode.inspectHotspot",
         "title": "ProofCode: Inspect Hotspot Evidence"
+      },
+      {
+        "command": "proofcode.verifyBaseline",
+        "title": "ProofCode: Verify Baseline"
       }
     ],
     "configuration": {
@@ -32,8 +52,8 @@
       "properties": {
         "proofcode.pythonPath": {
           "type": "string",
-          "default": "python",
-          "description": "Python executable used to run ProofCode Core."
+          "default": "auto",
+          "description": "Python executable. 'auto' prefers core/.venv, then .venv, then system Python."
         },
         "proofcode.includeTests": {
           "type": "boolean",
@@ -49,10 +69,11 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run check",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "test:commands": "node scripts/check-commands.mjs",
+    "check": "npm run test:commands && npm run compile"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

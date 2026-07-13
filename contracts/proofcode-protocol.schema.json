@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proofcode.dev/contracts/proofcode-protocol.schema.json",
+  "title": "ProofCode Core Protocol Envelope",
+  "type": "object",
+  "required": [
+    "status",
+    "kind",
+    "app_version",
+    "protocol_version"
+  ],
+  "properties": {
+    "status": {
+      "enum": ["ok", "error"]
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocol_version": {
+      "const": "1"
+    },
+    "data": {
+      "type": "object"
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "required": ["data"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "required": ["error"]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -19,6 +19,7 @@ LANGUAGE_BY_SUFFIX = {
     ".json": "json",
 }
 
+
 @dataclass(frozen=True)
 class ComplexityBreakdown:
     conditions: int
@@ -35,15 +36,18 @@ class ComplexityBreakdown:
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
 
+
 @dataclass(frozen=True)
 class FunctionEvidence:
     return_count: int
     call_count: int
+    call_names: list[str]
     raise_count: int
     max_nesting_depth: int
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
 
 @dataclass(frozen=True)
 class CodeSymbol:
@@ -59,11 +63,17 @@ class CodeSymbol:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+
         if self.complexity_breakdown is not None:
-            data["complexity_breakdown"] = self.complexity_breakdown.to_dict()
+            data["complexity_breakdown"] = (
+                self.complexity_breakdown.to_dict()
+            )
+
         if self.evidence is not None:
             data["evidence"] = self.evidence.to_dict()
+
         return data
+
 
 @dataclass(frozen=True)
 class StructureAnalysis:
@@ -81,6 +91,7 @@ class StructureAnalysis:
             "functions": [item.to_dict() for item in self.functions],
             "total_symbols": self.total_symbols,
         }
+
 
 @dataclass(frozen=True)
 class FileAnalysis:
@@ -107,13 +118,18 @@ class FileAnalysis:
             "structure": self.structure.to_dict(),
         }
 
+
 def detect_language(path: Path) -> str:
     return LANGUAGE_BY_SUFFIX.get(path.suffix.lower(), "unknown")
+
 
 def _line_end(node: ast.AST) -> int:
     return getattr(node, "end_lineno", getattr(node, "lineno", 0))
 
-def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+
+def _parameter_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
     names: list[str] = []
     names.extend(arg.arg for arg in node.args.posonlyargs)
     names.extend(arg.arg for arg in node.args.args)
@@ -128,76 +144,154 @@ def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
 
     return names
 
-def _complexity_breakdown(node: ast.AST) -> ComplexityBreakdown:
-    conditions = 0
-    loops = 0
-    boolean_branches = 0
-    exception_handlers = 0
-    comprehensions = 0
-    match_cases = 0
 
-    for child in ast.walk(node):
-        if isinstance(child, (ast.If, ast.IfExp)):
-            conditions += 1
-        elif isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
-            loops += 1
-        elif isinstance(child, ast.BoolOp):
-            boolean_branches += max(1, len(child.values) - 1)
-        elif isinstance(child, ast.ExceptHandler):
-            exception_handlers += 1
-        elif isinstance(child, ast.comprehension):
-            comprehensions += 1
-        elif isinstance(child, ast.Match):
-            match_cases += len(child.cases)
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
 
-    return ComplexityBreakdown(
-        conditions=conditions,
-        loops=loops,
-        boolean_branches=boolean_branches,
-        exception_handlers=exception_handlers,
-        comprehensions=comprehensions,
-        match_cases=match_cases,
+    if isinstance(node, ast.Attribute):
+        parent = _call_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+
+    return node.__class__.__name__
+
+
+class _FunctionBodyVisitor(ast.NodeVisitor):
+    """Collect facts from one function without entering nested functions."""
+
+    def __init__(self) -> None:
+        self.conditions = 0
+        self.loops = 0
+        self.boolean_branches = 0
+        self.exception_handlers = 0
+        self.comprehensions = 0
+        self.match_cases = 0
+        self.return_count = 0
+        self.call_names: list[str] = []
+        self.raise_count = 0
+        self.current_nesting = 0
+        self.max_nesting = 0
+
+    def _visit_nested_block(self, node: ast.AST) -> None:
+        self.current_nesting += 1
+        self.max_nesting = max(
+            self.max_nesting,
+            self.current_nesting,
+        )
+        self.generic_visit(node)
+        self.current_nesting -= 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Nested function evidence belongs to the nested function itself.
+        return
+
+    def visit_AsyncFunctionDef(
+        self,
+        node: ast.AsyncFunctionDef,
+    ) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_If(self, node: ast.If) -> None:
+        self.conditions += 1
+        self._visit_nested_block(node)
+
+    def visit_IfExp(self, node: ast.IfExp) -> None:
+        self.conditions += 1
+        self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.loops += 1
+        self._visit_nested_block(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.loops += 1
+        self._visit_nested_block(node)
+
+    def visit_While(self, node: ast.While) -> None:
+        self.loops += 1
+        self._visit_nested_block(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        self._visit_nested_block(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        self._visit_nested_block(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self._visit_nested_block(node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        self.match_cases += len(node.cases)
+        self._visit_nested_block(node)
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        self.boolean_branches += max(1, len(node.values) - 1)
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(
+        self,
+        node: ast.ExceptHandler,
+    ) -> None:
+        self.exception_handlers += 1
+        self.generic_visit(node)
+
+    def visit_comprehension(
+        self,
+        node: ast.comprehension,
+    ) -> None:
+        self.comprehensions += 1
+        self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        self.return_count += 1
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.call_names.append(_call_name(node.func))
+        self.generic_visit(node)
+
+    def visit_Raise(self, node: ast.Raise) -> None:
+        self.raise_count += 1
+        self.generic_visit(node)
+
+
+def _inspect_function(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[ComplexityBreakdown, FunctionEvidence]:
+    visitor = _FunctionBodyVisitor()
+
+    for statement in node.body:
+        visitor.visit(statement)
+
+    breakdown = ComplexityBreakdown(
+        conditions=visitor.conditions,
+        loops=visitor.loops,
+        boolean_branches=visitor.boolean_branches,
+        exception_handlers=visitor.exception_handlers,
+        comprehensions=visitor.comprehensions,
+        match_cases=visitor.match_cases,
     )
 
-NESTING_NODES = (
-    ast.If,
-    ast.For,
-    ast.AsyncFor,
-    ast.While,
-    ast.Try,
-    ast.With,
-    ast.AsyncWith,
-    ast.Match,
-)
-
-def _max_nesting_depth(node: ast.AST, depth: int = 0) -> int:
-    current_depth = depth + 1 if isinstance(node, NESTING_NODES) else depth
-    child_depths = [
-        _max_nesting_depth(child, current_depth)
-        for child in ast.iter_child_nodes(node)
-    ]
-    return max([current_depth, *child_depths])
-
-def _function_evidence(node: ast.AST) -> FunctionEvidence:
-    return FunctionEvidence(
-        return_count=sum(
-            isinstance(child, ast.Return) for child in ast.walk(node)
-        ),
-        call_count=sum(
-            isinstance(child, ast.Call) for child in ast.walk(node)
-        ),
-        raise_count=sum(
-            isinstance(child, ast.Raise) for child in ast.walk(node)
-        ),
-        max_nesting_depth=_max_nesting_depth(node),
+    evidence = FunctionEvidence(
+        return_count=visitor.return_count,
+        call_count=len(visitor.call_names),
+        call_names=visitor.call_names,
+        raise_count=visitor.raise_count,
+        max_nesting_depth=visitor.max_nesting,
     )
+
+    return breakdown, evidence
+
 
 def _symbol_from_function(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> CodeSymbol:
     start = node.lineno
     end = _line_end(node)
-    breakdown = _complexity_breakdown(node)
+    breakdown, evidence = _inspect_function(node)
 
     return CodeSymbol(
         symbol_type=(
@@ -211,9 +305,10 @@ def _symbol_from_function(
         line_count=end - start + 1,
         complexity=1 + breakdown.total_added,
         complexity_breakdown=breakdown,
-        evidence=_function_evidence(node),
+        evidence=evidence,
         parameters=_parameter_names(node),
     )
+
 
 def _symbol_from_class(node: ast.ClassDef) -> CodeSymbol:
     start = node.lineno
@@ -231,7 +326,11 @@ def _symbol_from_class(node: ast.ClassDef) -> CodeSymbol:
         parameters=[],
     )
 
-def analyze_python_structure(text: str, file_name: str) -> StructureAnalysis:
+
+def analyze_python_structure(
+    text: str,
+    file_name: str,
+) -> StructureAnalysis:
     try:
         tree = ast.parse(text, filename=file_name)
     except SyntaxError as error:
@@ -245,7 +344,10 @@ def analyze_python_structure(text: str, file_name: str) -> StructureAnalysis:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             classes.append(_symbol_from_class(node))
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
             functions.append(_symbol_from_function(node))
 
     classes.sort(key=lambda item: item.line_start)
@@ -258,6 +360,7 @@ def analyze_python_structure(text: str, file_name: str) -> StructureAnalysis:
         functions=functions,
         total_symbols=len(classes) + len(functions),
     )
+
 
 def analyze_structure(
     language: str,
@@ -275,11 +378,13 @@ def analyze_structure(
         total_symbols=0,
     )
 
+
 def analyze_file(file_path: str) -> FileAnalysis:
     path = Path(file_path).expanduser().resolve()
 
     if not path.exists():
         raise FileNotFoundError(f"File does not exist: {path}")
+
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
 
@@ -288,7 +393,9 @@ def analyze_file(file_path: str) -> FileAnalysis:
     try:
         text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError as error:
-        raise ValueError(f"File is not valid UTF-8 text: {path}") from error
+        raise ValueError(
+            f"File is not valid UTF-8 text: {path}"
+        ) from error
 
     language = detect_language(path)
     lines = text.splitlines()
