@@ -7,6 +7,23 @@ export interface CorePingResponse {
   protocol_version: string;
 }
 
+export interface FileAnalysis {
+  path: string;
+  file_name: string;
+  language: string;
+  size_bytes: number;
+  total_lines: number;
+  non_empty_lines: number;
+  empty_lines: number;
+  sha256: string;
+}
+
+export interface CoreAnalyzeFileResponse {
+  status: "ok";
+  protocol_version: string;
+  analysis: FileAnalysis;
+}
+
 export interface CoreClientOptions {
   pythonPath: string;
   workspaceRoot: string;
@@ -25,12 +42,20 @@ export class CoreClient {
   }
 
   public ping(): Promise<CorePingResponse> {
+    return this.runCoreCommand<CorePingResponse>(["ping"]);
+  }
+
+  public analyzeFile(filePath: string): Promise<CoreAnalyzeFileResponse> {
+    return this.runCoreCommand<CoreAnalyzeFileResponse>(["analyze-file", filePath]);
+  }
+
+  private runCoreCommand<T>(args: string[]): Promise<T> {
     const coreSrc = path.join(this.workspaceRoot, "core", "src");
 
     return new Promise((resolve, reject) => {
       const child = spawn(
         this.pythonPath,
-        ["-m", "proofcode_core", "ping"],
+        ["-m", "proofcode_core", ...args],
         {
           cwd: this.workspaceRoot,
           env: {
@@ -43,13 +68,13 @@ export class CoreClient {
         }
       );
 
-      this.collectPingResult(child, resolve, reject);
+      this.collectJsonResult<T>(child, resolve, reject);
     });
   }
 
-  private collectPingResult(
+  private collectJsonResult<T>(
     child: ChildProcessWithoutNullStreams,
-    resolve: (value: CorePingResponse) => void,
+    resolve: (value: T) => void,
     reject: (reason: Error) => void
   ): void {
     let stdout = "";
@@ -65,14 +90,18 @@ export class CoreClient {
 
     const timer = setTimeout(() => {
       child.kill();
-      finishWithError(new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`));
+      finishWithError(
+        new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`)
+      );
     }, this.timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
+
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
     });
+
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
@@ -99,15 +128,8 @@ export class CoreClient {
       }
 
       try {
-        const response = JSON.parse(stdout.trim()) as CorePingResponse;
-
-        if (response.status !== "ok") {
-          finishWithError(new Error("ProofCode Core returned an unexpected status."));
-          return;
-        }
-
         settled = true;
-        resolve(response);
+        resolve(JSON.parse(stdout.trim()) as T);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         finishWithError(
