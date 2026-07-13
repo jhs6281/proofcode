@@ -8,7 +8,7 @@ from typing import Sequence
 from proofcode_core.analyzer import analyze_file
 from proofcode_core.workspace import analyze_workspace
 
-PROTOCOL_VERSION = "0.5"
+PROTOCOL_VERSION = "0.6"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="proofcode-core")
@@ -21,25 +21,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     workspace_parser = subparsers.add_parser("analyze-workspace")
     workspace_parser.add_argument("workspace_path")
-    workspace_parser.add_argument("--hotspot-limit", type=int, default=10)
+    workspace_parser.add_argument("--hotspot-limit", type=int, default=20)
     workspace_parser.add_argument("--include-tests", action="store_true")
     workspace_parser.add_argument("--include-examples", action="store_true")
 
     return parser
-
-def ping_payload() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "message": "ProofCode Core is running",
-        "protocol_version": PROTOCOL_VERSION,
-    }
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
         if args.command == "ping":
-            payload = ping_payload()
+            payload = {
+                "status": "ok",
+                "message": "ProofCode Core is running",
+                "protocol_version": PROTOCOL_VERSION,
+            }
         elif args.command == "analyze-file":
             payload = {
                 "status": "ok",
@@ -74,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "message": str(error),
                     },
                 },
-                ensure_ascii=False,
+                ensure_ascii=True,
             ),
             file=sys.stderr,
         )

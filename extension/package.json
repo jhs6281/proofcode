@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify AI-generated code changes before developers approve them.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -13,7 +13,7 @@
   ],
   "activationEvents": [
     "onCommand:proofcode.analyzeWorkspace",
-    "onCommand:proofcode.openHotspot"
+    "onCommand:proofcode.inspectHotspot"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -23,8 +23,8 @@
         "title": "ProofCode: Analyze Workspace"
       },
       {
-        "command": "proofcode.openHotspot",
-        "title": "ProofCode: Open Hotspot"
+        "command": "proofcode.inspectHotspot",
+        "title": "ProofCode: Inspect Hotspot Evidence"
       }
     ],
     "configuration": {
@@ -52,16 +52,11 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
-    "test:connection": "node scripts/test-connection.mjs"
+    "lint": "eslint src --ext ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.95.0",
-    "@typescript-eslint/eslint-plugin": "^8.18.0",
-    "@typescript-eslint/parser": "^8.18.0",
-    "eslint": "^9.16.0",
-    "typescript": "^5.7.2",
-    "typescript-eslint": "^8.18.0"
+    "typescript": "^5.7.2"
   }
 }

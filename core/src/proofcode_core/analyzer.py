@@ -30,14 +30,17 @@ class ComplexityBreakdown:
 
     @property
     def total_added(self) -> int:
-        return (
-            self.conditions
-            + self.loops
-            + self.boolean_branches
-            + self.exception_handlers
-            + self.comprehensions
-            + self.match_cases
-        )
+        return sum(asdict(self).values())
+
+    def to_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+@dataclass(frozen=True)
+class FunctionEvidence:
+    return_count: int
+    call_count: int
+    raise_count: int
+    max_nesting_depth: int
 
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
@@ -51,12 +54,15 @@ class CodeSymbol:
     line_count: int
     complexity: int | None
     complexity_breakdown: ComplexityBreakdown | None
+    evidence: FunctionEvidence | None
     parameters: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         if self.complexity_breakdown is not None:
             data["complexity_breakdown"] = self.complexity_breakdown.to_dict()
+        if self.evidence is not None:
+            data["evidence"] = self.evidence.to_dict()
         return data
 
 @dataclass(frozen=True)
@@ -109,15 +115,14 @@ def _line_end(node: ast.AST) -> int:
 
 def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     names: list[str] = []
+    names.extend(arg.arg for arg in node.args.posonlyargs)
+    names.extend(arg.arg for arg in node.args.args)
 
-    for arg in node.args.posonlyargs:
-        names.append(arg.arg)
-    for arg in node.args.args:
-        names.append(arg.arg)
     if node.args.vararg:
         names.append(f"*{node.args.vararg.arg}")
-    for arg in node.args.kwonlyargs:
-        names.append(arg.arg)
+
+    names.extend(arg.arg for arg in node.args.kwonlyargs)
+
     if node.args.kwarg:
         names.append(f"**{node.args.kwarg.arg}")
 
@@ -154,6 +159,39 @@ def _complexity_breakdown(node: ast.AST) -> ComplexityBreakdown:
         match_cases=match_cases,
     )
 
+NESTING_NODES = (
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Try,
+    ast.With,
+    ast.AsyncWith,
+    ast.Match,
+)
+
+def _max_nesting_depth(node: ast.AST, depth: int = 0) -> int:
+    current_depth = depth + 1 if isinstance(node, NESTING_NODES) else depth
+    child_depths = [
+        _max_nesting_depth(child, current_depth)
+        for child in ast.iter_child_nodes(node)
+    ]
+    return max([current_depth, *child_depths])
+
+def _function_evidence(node: ast.AST) -> FunctionEvidence:
+    return FunctionEvidence(
+        return_count=sum(
+            isinstance(child, ast.Return) for child in ast.walk(node)
+        ),
+        call_count=sum(
+            isinstance(child, ast.Call) for child in ast.walk(node)
+        ),
+        raise_count=sum(
+            isinstance(child, ast.Raise) for child in ast.walk(node)
+        ),
+        max_nesting_depth=_max_nesting_depth(node),
+    )
+
 def _symbol_from_function(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> CodeSymbol:
@@ -173,6 +211,7 @@ def _symbol_from_function(
         line_count=end - start + 1,
         complexity=1 + breakdown.total_added,
         complexity_breakdown=breakdown,
+        evidence=_function_evidence(node),
         parameters=_parameter_names(node),
     )
 
@@ -188,6 +227,7 @@ def _symbol_from_class(node: ast.ClassDef) -> CodeSymbol:
         line_count=end - start + 1,
         complexity=None,
         complexity_breakdown=None,
+        evidence=None,
         parameters=[],
     )
 
@@ -195,8 +235,9 @@ def analyze_python_structure(text: str, file_name: str) -> StructureAnalysis:
     try:
         tree = ast.parse(text, filename=file_name)
     except SyntaxError as error:
-        message = f"Python syntax error at line {error.lineno}: {error.msg}"
-        raise ValueError(message) from error
+        raise ValueError(
+            f"Python syntax error at line {error.lineno}: {error.msg}"
+        ) from error
 
     classes: list[CodeSymbol] = []
     functions: list[CodeSymbol] = []

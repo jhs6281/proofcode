@@ -1,12 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import * as path from "node:path";
 
-export interface CorePingResponse {
-  status: "ok";
-  message: string;
-  protocol_version: string;
-}
-
 export interface ComplexityBreakdown {
   conditions: number;
   loops: number;
@@ -14,6 +8,13 @@ export interface ComplexityBreakdown {
   exception_handlers: number;
   comprehensions: number;
   match_cases: number;
+}
+
+export interface FunctionEvidence {
+  return_count: number;
+  call_count: number;
+  raise_count: number;
+  max_nesting_depth: number;
 }
 
 export interface Hotspot {
@@ -28,13 +29,8 @@ export interface Hotspot {
   line_count: number;
   complexity: number;
   complexity_breakdown: ComplexityBreakdown;
+  evidence: FunctionEvidence;
   reasons: string[];
-}
-
-export interface CategoryCounts {
-  source: number;
-  test: number;
-  example: number;
 }
 
 export interface WorkspaceAnalysis {
@@ -44,7 +40,11 @@ export interface WorkspaceAnalysis {
   total_lines: number;
   total_classes: number;
   total_functions: number;
-  category_counts: CategoryCounts;
+  category_counts: {
+    source: number;
+    test: number;
+    example: number;
+  };
   hotspots: Hotspot[];
 }
 
@@ -54,55 +54,31 @@ export interface CoreAnalyzeWorkspaceResponse {
   workspace_analysis: WorkspaceAnalysis;
 }
 
-export interface CoreClientOptions {
-  pythonPath: string;
-  workspaceRoot: string;
-  timeoutMs?: number;
-}
-
-export interface AnalyzeWorkspaceOptions {
-  includeTests: boolean;
-  includeExamples: boolean;
-}
-
 export class CoreClient {
-  private readonly pythonPath: string;
-  private readonly workspaceRoot: string;
-  private readonly timeoutMs: number;
-
-  public constructor(options: CoreClientOptions) {
-    this.pythonPath = options.pythonPath;
-    this.workspaceRoot = options.workspaceRoot;
-    this.timeoutMs = options.timeoutMs ?? 30_000;
-  }
-
-  public ping(): Promise<CorePingResponse> {
-    return this.runCoreCommand<CorePingResponse>(["ping"]);
-  }
+  public constructor(
+    private readonly pythonPath: string,
+    private readonly workspaceRoot: string,
+    private readonly timeoutMs = 30_000
+  ) {}
 
   public analyzeWorkspace(
-    workspacePath: string,
-    options: AnalyzeWorkspaceOptions
+    includeTests: boolean,
+    includeExamples: boolean
   ): Promise<CoreAnalyzeWorkspaceResponse> {
     const args = [
       "analyze-workspace",
-      workspacePath,
+      this.workspaceRoot,
       "--hotspot-limit",
       "20"
     ];
 
-    if (options.includeTests) {
-      args.push("--include-tests");
-    }
+    if (includeTests) args.push("--include-tests");
+    if (includeExamples) args.push("--include-examples");
 
-    if (options.includeExamples) {
-      args.push("--include-examples");
-    }
-
-    return this.runCoreCommand<CoreAnalyzeWorkspaceResponse>(args);
+    return this.run<CoreAnalyzeWorkspaceResponse>(args);
   }
 
-  private runCoreCommand<T>(args: string[]): Promise<T> {
+  private run<T>(args: string[]): Promise<T> {
     const coreSrc = path.join(this.workspaceRoot, "core", "src");
 
     return new Promise((resolve, reject) => {
@@ -113,21 +89,21 @@ export class CoreClient {
           cwd: this.workspaceRoot,
           env: {
             ...process.env,
-              PYTHONUTF8: "1",
-              PYTHONIOENCODING: "utf-8",
-              PYTHONPATH: [coreSrc, process.env.PYTHONPATH]
-                .filter(Boolean)
-                .join(path.delimiter)
+            PYTHONUTF8: "1",
+            PYTHONIOENCODING: "utf-8",
+            PYTHONPATH: [coreSrc, process.env.PYTHONPATH]
+              .filter(Boolean)
+              .join(path.delimiter)
           },
           windowsHide: true
         }
       );
 
-      this.collectJsonResult<T>(child, resolve, reject);
+      this.collect(child, resolve, reject);
     });
   }
 
-  private collectJsonResult<T>(
+  private collect<T>(
     child: ChildProcessWithoutNullStreams,
     resolve: (value: T) => void,
     reject: (reason: Error) => void
@@ -145,51 +121,25 @@ export class CoreClient {
 
     const timer = setTimeout(() => {
       child.kill();
-      fail(new Error(
-        `ProofCode Core timed out after ${this.timeoutMs}ms.`
-      ));
+      fail(new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`));
     }, this.timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
 
     child.on("error", (error) => {
       clearTimeout(timer);
-      fail(new Error(
-        `Could not start Python process "${this.pythonPath}": ${error.message}`
-      ));
+      fail(new Error(`Python 실행 실패: ${error.message}`));
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
-
-      if (settled) {
-        return;
-      }
+      if (settled) return;
 
       if (code !== 0) {
-        let message = stderr.trim();
-
-        try {
-          const payload = JSON.parse(message) as {
-            error?: { message?: string };
-          };
-          message = payload.error?.message ?? message;
-        } catch {
-          // stderr가 JSON이 아니면 원문을 사용합니다.
-        }
-
-        fail(new Error(
-          `ProofCode Core exited with code ${code}. ${message}`
-        ));
+        fail(new Error(stderr.trim()));
         return;
       }
 
@@ -197,13 +147,7 @@ export class CoreClient {
         settled = true;
         resolve(JSON.parse(stdout.trim()) as T);
       } catch (error) {
-        const reason = error instanceof Error
-          ? error.message
-          : String(error);
-
-        fail(new Error(
-          `ProofCode Core returned invalid JSON: ${reason}`
-        ));
+        fail(new Error(`Core JSON 해석 실패: ${String(error)}`));
       }
     });
   }
