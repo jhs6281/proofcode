@@ -7,6 +7,24 @@ export interface CorePingResponse {
   protocol_version: string;
 }
 
+export interface CodeSymbol {
+  symbol_type: string;
+  name: string;
+  line_start: number;
+  line_end: number;
+  line_count: number;
+  complexity: number | null;
+  parameters: string[];
+}
+
+export interface StructureAnalysis {
+  supported: boolean;
+  parser: string | null;
+  classes: CodeSymbol[];
+  functions: CodeSymbol[];
+  total_symbols: number;
+}
+
 export interface FileAnalysis {
   path: string;
   file_name: string;
@@ -16,6 +34,7 @@ export interface FileAnalysis {
   non_empty_lines: number;
   empty_lines: number;
   sha256: string;
+  structure: StructureAnalysis;
 }
 
 export interface CoreAnalyzeFileResponse {
@@ -46,7 +65,10 @@ export class CoreClient {
   }
 
   public analyzeFile(filePath: string): Promise<CoreAnalyzeFileResponse> {
-    return this.runCoreCommand<CoreAnalyzeFileResponse>(["analyze-file", filePath]);
+    return this.runCoreCommand<CoreAnalyzeFileResponse>([
+      "analyze-file",
+      filePath
+    ]);
   }
 
   private runCoreCommand<T>(args: string[]): Promise<T> {
@@ -109,7 +131,9 @@ export class CoreClient {
     child.on("error", (error) => {
       clearTimeout(timer);
       finishWithError(
-        new Error(`Could not start Python process "${this.pythonPath}": ${error.message}`)
+        new Error(
+          `Could not start Python process "${this.pythonPath}": ${error.message}`
+        )
       );
     });
 
@@ -121,8 +145,19 @@ export class CoreClient {
       }
 
       if (code !== 0) {
+        let message = stderr.trim();
+
+        try {
+          const payload = JSON.parse(message) as {
+            error?: { message?: string };
+          };
+          message = payload.error?.message ?? message;
+        } catch {
+          // JSON이 아니라면 stderr 원문을 사용합니다.
+        }
+
         finishWithError(
-          new Error(`ProofCode Core exited with code ${code}. ${stderr.trim()}`)
+          new Error(`ProofCode Core exited with code ${code}. ${message}`)
         );
         return;
       }
@@ -133,7 +168,9 @@ export class CoreClient {
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         finishWithError(
-          new Error(`ProofCode Core returned invalid JSON: ${reason}\n${stdout}`)
+          new Error(
+            `ProofCode Core returned invalid JSON: ${reason}\n${stdout}`
+          )
         );
       }
     });
