@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify AI-generated code changes before developers approve them.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -12,7 +12,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:proofcode.analyzeWorkspace"
+    "onCommand:proofcode.analyzeWorkspace",
+    "onCommand:proofcode.openHotspot"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -20,6 +21,10 @@
       {
         "command": "proofcode.analyzeWorkspace",
         "title": "ProofCode: Analyze Workspace"
+      },
+      {
+        "command": "proofcode.openHotspot",
+        "title": "ProofCode: Open Hotspot"
       }
     ],
     "configuration": {
@@ -29,6 +34,16 @@
           "type": "string",
           "default": "python",
           "description": "Python executable used to run ProofCode Core."
+        },
+        "proofcode.includeTests": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include test files in hotspot ranking."
+        },
+        "proofcode.includeExamples": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include example and fixture files in hotspot ranking."
         }
       }
     }

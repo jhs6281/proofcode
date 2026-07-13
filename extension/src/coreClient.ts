@@ -7,51 +7,34 @@ export interface CorePingResponse {
   protocol_version: string;
 }
 
-export interface CodeSymbol {
-  symbol_type: string;
-  name: string;
-  line_start: number;
-  line_end: number;
-  line_count: number;
-  complexity: number | null;
-  parameters: string[];
-}
-
-export interface StructureAnalysis {
-  supported: boolean;
-  parser: string | null;
-  classes: CodeSymbol[];
-  functions: CodeSymbol[];
-  total_symbols: number;
-}
-
-export interface FileAnalysis {
-  path: string;
-  file_name: string;
-  language: string;
-  size_bytes: number;
-  total_lines: number;
-  non_empty_lines: number;
-  empty_lines: number;
-  sha256: string;
-  structure: StructureAnalysis;
-}
-
-export interface CoreAnalyzeFileResponse {
-  status: "ok";
-  protocol_version: string;
-  analysis: FileAnalysis;
+export interface ComplexityBreakdown {
+  conditions: number;
+  loops: number;
+  boolean_branches: number;
+  exception_handlers: number;
+  comprehensions: number;
+  match_cases: number;
 }
 
 export interface Hotspot {
   file_path: string;
+  relative_path: string;
   file_name: string;
+  category: "source" | "test" | "example";
   symbol_name: string;
   symbol_type: string;
   line_start: number;
   line_end: number;
   line_count: number;
   complexity: number;
+  complexity_breakdown: ComplexityBreakdown;
+  reasons: string[];
+}
+
+export interface CategoryCounts {
+  source: number;
+  test: number;
+  example: number;
 }
 
 export interface WorkspaceAnalysis {
@@ -61,8 +44,8 @@ export interface WorkspaceAnalysis {
   total_lines: number;
   total_classes: number;
   total_functions: number;
+  category_counts: CategoryCounts;
   hotspots: Hotspot[];
-  files: FileAnalysis[];
 }
 
 export interface CoreAnalyzeWorkspaceResponse {
@@ -75,6 +58,11 @@ export interface CoreClientOptions {
   pythonPath: string;
   workspaceRoot: string;
   timeoutMs?: number;
+}
+
+export interface AnalyzeWorkspaceOptions {
+  includeTests: boolean;
+  includeExamples: boolean;
 }
 
 export class CoreClient {
@@ -92,18 +80,26 @@ export class CoreClient {
     return this.runCoreCommand<CorePingResponse>(["ping"]);
   }
 
-  public analyzeFile(filePath: string): Promise<CoreAnalyzeFileResponse> {
-    return this.runCoreCommand<CoreAnalyzeFileResponse>([
-      "analyze-file", filePath
-    ]);
-  }
-
   public analyzeWorkspace(
-    workspacePath: string
+    workspacePath: string,
+    options: AnalyzeWorkspaceOptions
   ): Promise<CoreAnalyzeWorkspaceResponse> {
-    return this.runCoreCommand<CoreAnalyzeWorkspaceResponse>([
-      "analyze-workspace", workspacePath, "--hotspot-limit", "10"
-    ]);
+    const args = [
+      "analyze-workspace",
+      workspacePath,
+      "--hotspot-limit",
+      "20"
+    ];
+
+    if (options.includeTests) {
+      args.push("--include-tests");
+    }
+
+    if (options.includeExamples) {
+      args.push("--include-examples");
+    }
+
+    return this.runCoreCommand<CoreAnalyzeWorkspaceResponse>(args);
   }
 
   private runCoreCommand<T>(args: string[]): Promise<T> {
@@ -117,9 +113,11 @@ export class CoreClient {
           cwd: this.workspaceRoot,
           env: {
             ...process.env,
-            PYTHONPATH: [coreSrc, process.env.PYTHONPATH]
-              .filter(Boolean)
-              .join(path.delimiter)
+              PYTHONUTF8: "1",
+              PYTHONIOENCODING: "utf-8",
+              PYTHONPATH: [coreSrc, process.env.PYTHONPATH]
+                .filter(Boolean)
+                .join(path.delimiter)
           },
           windowsHide: true
         }
@@ -147,25 +145,51 @@ export class CoreClient {
 
     const timer = setTimeout(() => {
       child.kill();
-      fail(new Error(`ProofCode Core timed out after ${this.timeoutMs}ms.`));
+      fail(new Error(
+        `ProofCode Core timed out after ${this.timeoutMs}ms.`
+      ));
     }, this.timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
 
     child.on("error", (error) => {
       clearTimeout(timer);
-      fail(new Error(`Could not start Python: ${error.message}`));
+      fail(new Error(
+        `Could not start Python process "${this.pythonPath}": ${error.message}`
+      ));
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (settled) return;
+
+      if (settled) {
+        return;
+      }
 
       if (code !== 0) {
-        fail(new Error(`ProofCode Core exited with code ${code}. ${stderr.trim()}`));
+        let message = stderr.trim();
+
+        try {
+          const payload = JSON.parse(message) as {
+            error?: { message?: string };
+          };
+          message = payload.error?.message ?? message;
+        } catch {
+          // stderr가 JSON이 아니면 원문을 사용합니다.
+        }
+
+        fail(new Error(
+          `ProofCode Core exited with code ${code}. ${message}`
+        ));
         return;
       }
 
@@ -173,8 +197,13 @@ export class CoreClient {
         settled = true;
         resolve(JSON.parse(stdout.trim()) as T);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        fail(new Error(`ProofCode Core returned invalid JSON: ${reason}`));
+        const reason = error instanceof Error
+          ? error.message
+          : String(error);
+
+        fail(new Error(
+          `ProofCode Core returned invalid JSON: ${reason}`
+        ));
       }
     });
   }

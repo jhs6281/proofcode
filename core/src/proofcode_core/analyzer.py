@@ -20,6 +20,29 @@ LANGUAGE_BY_SUFFIX = {
 }
 
 @dataclass(frozen=True)
+class ComplexityBreakdown:
+    conditions: int
+    loops: int
+    boolean_branches: int
+    exception_handlers: int
+    comprehensions: int
+    match_cases: int
+
+    @property
+    def total_added(self) -> int:
+        return (
+            self.conditions
+            + self.loops
+            + self.boolean_branches
+            + self.exception_handlers
+            + self.comprehensions
+            + self.match_cases
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+@dataclass(frozen=True)
 class CodeSymbol:
     symbol_type: str
     name: str
@@ -27,10 +50,14 @@ class CodeSymbol:
     line_end: int
     line_count: int
     complexity: int | None
+    complexity_breakdown: ComplexityBreakdown | None
     parameters: list[str]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        if self.complexity_breakdown is not None:
+            data["complexity_breakdown"] = self.complexity_breakdown.to_dict()
+        return data
 
 @dataclass(frozen=True)
 class StructureAnalysis:
@@ -62,9 +89,17 @@ class FileAnalysis:
     structure: StructureAnalysis
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["structure"] = self.structure.to_dict()
-        return data
+        return {
+            "path": self.path,
+            "file_name": self.file_name,
+            "language": self.language,
+            "size_bytes": self.size_bytes,
+            "total_lines": self.total_lines,
+            "non_empty_lines": self.non_empty_lines,
+            "empty_lines": self.empty_lines,
+            "sha256": self.sha256,
+            "structure": self.structure.to_dict(),
+        }
 
 def detect_language(path: Path) -> str:
     return LANGUAGE_BY_SUFFIX.get(path.suffix.lower(), "unknown")
@@ -88,44 +123,56 @@ def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
 
     return names
 
-def _calculate_complexity(node: ast.AST) -> int:
-    """Return a small, educational cyclomatic-complexity approximation."""
-    complexity = 1
+def _complexity_breakdown(node: ast.AST) -> ComplexityBreakdown:
+    conditions = 0
+    loops = 0
+    boolean_branches = 0
+    exception_handlers = 0
+    comprehensions = 0
+    match_cases = 0
 
     for child in ast.walk(node):
-        if isinstance(
-            child,
-            (
-                ast.If,
-                ast.For,
-                ast.AsyncFor,
-                ast.While,
-                ast.IfExp,
-                ast.ExceptHandler,
-                ast.comprehension,
-            ),
-        ):
-            complexity += 1
+        if isinstance(child, (ast.If, ast.IfExp)):
+            conditions += 1
+        elif isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
+            loops += 1
         elif isinstance(child, ast.BoolOp):
-            complexity += max(1, len(child.values) - 1)
+            boolean_branches += max(1, len(child.values) - 1)
+        elif isinstance(child, ast.ExceptHandler):
+            exception_handlers += 1
+        elif isinstance(child, ast.comprehension):
+            comprehensions += 1
         elif isinstance(child, ast.Match):
-            complexity += len(child.cases)
+            match_cases += len(child.cases)
 
-    return complexity
+    return ComplexityBreakdown(
+        conditions=conditions,
+        loops=loops,
+        boolean_branches=boolean_branches,
+        exception_handlers=exception_handlers,
+        comprehensions=comprehensions,
+        match_cases=match_cases,
+    )
 
 def _symbol_from_function(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> CodeSymbol:
     start = node.lineno
     end = _line_end(node)
+    breakdown = _complexity_breakdown(node)
 
     return CodeSymbol(
-        symbol_type="async_function" if isinstance(node, ast.AsyncFunctionDef) else "function",
+        symbol_type=(
+            "async_function"
+            if isinstance(node, ast.AsyncFunctionDef)
+            else "function"
+        ),
         name=node.name,
         line_start=start,
         line_end=end,
         line_count=end - start + 1,
-        complexity=_calculate_complexity(node),
+        complexity=1 + breakdown.total_added,
+        complexity_breakdown=breakdown,
         parameters=_parameter_names(node),
     )
 
@@ -140,6 +187,7 @@ def _symbol_from_class(node: ast.ClassDef) -> CodeSymbol:
         line_end=end,
         line_count=end - start + 1,
         complexity=None,
+        complexity_breakdown=None,
         parameters=[],
     )
 

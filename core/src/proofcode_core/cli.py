@@ -8,7 +8,7 @@ from typing import Sequence
 from proofcode_core.analyzer import analyze_file
 from proofcode_core.workspace import analyze_workspace
 
-PROTOCOL_VERSION = "0.4"
+PROTOCOL_VERSION = "0.5"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="proofcode-core")
@@ -16,12 +16,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("ping")
 
-    analyze_file_parser = subparsers.add_parser("analyze-file")
-    analyze_file_parser.add_argument("file_path")
+    file_parser = subparsers.add_parser("analyze-file")
+    file_parser.add_argument("file_path")
 
-    analyze_workspace_parser = subparsers.add_parser("analyze-workspace")
-    analyze_workspace_parser.add_argument("workspace_path")
-    analyze_workspace_parser.add_argument("--hotspot-limit", type=int, default=10)
+    workspace_parser = subparsers.add_parser("analyze-workspace")
+    workspace_parser.add_argument("workspace_path")
+    workspace_parser.add_argument("--hotspot-limit", type=int, default=10)
+    workspace_parser.add_argument("--include-tests", action="store_true")
+    workspace_parser.add_argument("--include-examples", action="store_true")
 
     return parser
 
@@ -51,21 +53,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "workspace_analysis": analyze_workspace(
                     args.workspace_path,
                     hotspot_limit=args.hotspot_limit,
+                    include_tests=args.include_tests,
+                    include_examples=args.include_examples,
                 ).to_dict(),
             }
         else:
             return 1
 
-        print(json.dumps(payload, ensure_ascii=False))
+        print(json.dumps(payload, ensure_ascii=True))
         return 0
 
     except (FileNotFoundError, ValueError, OSError) as error:
-        print(json.dumps({
-            "status": "error",
-            "protocol_version": PROTOCOL_VERSION,
-            "error": {
-                "type": error.__class__.__name__,
-                "message": str(error),
-            },
-        }, ensure_ascii=False), file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "protocol_version": PROTOCOL_VERSION,
+                    "error": {
+                        "type": error.__class__.__name__,
+                        "message": str(error),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
         return 1
