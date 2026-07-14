@@ -13,6 +13,7 @@ from proofcode_core.contract import (
     success_payload,
 )
 from proofcode_core.decision import (
+    list_benchmark_evidence,
     list_candidate_evidence,
     list_decisions,
     read_decision,
@@ -83,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_parser.add_argument("workspace_path")
 
+    benchmark_evidence_parser = subparsers.add_parser(
+        "list-benchmark-evidence"
+    )
+    benchmark_evidence_parser.add_argument("workspace_path")
+
     record_parser = subparsers.add_parser(
         "record-decision"
     )
@@ -95,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument(
         "--reason",
         required=True,
+    )
+
+    record_parser.add_argument(
+        "--benchmark-evidence",
+        default=None,
     )
 
     decisions_parser = subparsers.add_parser(
@@ -222,6 +233,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 },
             )
 
+        elif args.command == "list-benchmark-evidence":
+            payload = success_payload(
+                "benchmark_evidence_list",
+                {
+                    "benchmark_evidence": [
+                        item.to_dict()
+                        for item in list_benchmark_evidence(
+                            args.workspace_path
+                        )
+                    ],
+                },
+            )
+
         elif args.command == "record-decision":
             payload = success_payload(
                 "developer_decision",
@@ -236,6 +260,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ),
                             decision=args.decision,
                             reason=args.reason,
+                            benchmark_evidence_path=(
+                                args.benchmark_evidence
+                            ),
                         ).to_dict()
                     ),
                 },

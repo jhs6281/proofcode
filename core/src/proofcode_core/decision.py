@@ -13,6 +13,7 @@ from uuid import uuid4
 from proofcode_core.fingerprint import workspace_fingerprint
 from proofcode_core.version import (
     APP_VERSION,
+    BENCHMARK_EVIDENCE_SCHEMA_VERSION,
     CANDIDATE_EVIDENCE_SCHEMA_VERSION,
     DECISION_SCHEMA_VERSION,
     PROTOCOL_VERSION,
@@ -20,6 +21,7 @@ from proofcode_core.version import (
 
 DecisionValue = Literal["apply", "hold", "reject"]
 VALID_DECISIONS = {"apply", "hold", "reject"}
+SUPPORTED_DECISION_SCHEMA_VERSIONS = {"1", DECISION_SCHEMA_VERSION}
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,26 @@ class CandidateEvidenceSummary:
     target_relative_path: str
     candidate_path: str
     candidate_sha256: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BenchmarkEvidenceSummary:
+    evidence_path: str
+    created_at_utc: str
+    verdict: str
+    observed_change: str
+    target_relative_path: str
+    candidate_path: str
+    candidate_sha256: str
+    candidate_evidence_path: str
+    measured_runs: int
+    baseline_median_seconds: float
+    candidate_median_seconds: float
+    observed_percent_change: float | None
     message: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +76,17 @@ class DecisionRecord:
     workspace_fingerprint: str
     candidate_context_fingerprint: str
     workspace_matches_candidate_context: bool
+    benchmark_evidence_path: str | None
+    benchmark_evidence_sha256: str | None
+    benchmark_verdict: str | None
+    benchmark_observed_change: str | None
+    benchmark_measured_runs: int | None
+    benchmark_baseline_median_seconds: float | None
+    benchmark_candidate_median_seconds: float | None
+    benchmark_observed_percent_change: float | None
+    benchmark_context_fingerprint: str | None
+    workspace_matches_benchmark_context: bool | None
+    evidence_chain_complete: bool
     automatic_code_change_performed: bool
     apply_mode: str
 
@@ -72,18 +105,36 @@ class DecisionSummary:
     candidate_sha256: str
     source_verdict: str
     workspace_matches_candidate_context: bool
+    benchmark_linked: bool
+    benchmark_observed_change: str | None
+    evidence_chain_complete: bool
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+def _workspace(workspace_path: str) -> Path:
+    workspace = Path(workspace_path).expanduser().resolve()
+
+    if not workspace.exists():
+        raise FileNotFoundError(
+            f"Workspace does not exist: {workspace}"
+        )
+
+    if not workspace.is_dir():
+        raise ValueError(
+            f"Workspace path is not a directory: {workspace}"
+        )
+
+    return workspace
+
+
 def _candidate_directory(workspace: Path) -> Path:
-    return (
-        workspace
-        / ".proofcode"
-        / "evidence"
-        / "candidates"
-    )
+    return workspace / ".proofcode" / "evidence" / "candidates"
+
+
+def _benchmark_directory(workspace: Path) -> Path:
+    return workspace / ".proofcode" / "evidence" / "benchmarks"
 
 
 def _decision_directory(workspace: Path) -> Path:
@@ -114,40 +165,24 @@ def _read_json(path: Path, description: str) -> dict[str, Any]:
     return value
 
 
-def _workspace(workspace_path: str) -> Path:
-    workspace = Path(workspace_path).expanduser().resolve()
-
-    if not workspace.exists():
-        raise FileNotFoundError(
-            f"Workspace does not exist: {workspace}"
-        )
-
-    if not workspace.is_dir():
-        raise ValueError(
-            f"Workspace path is not a directory: {workspace}"
-        )
-
-    return workspace
-
-
-def _resolve_candidate_evidence(
+def _resolve_evidence_path(
     workspace: Path,
     evidence_path: str,
+    directory: Path,
+    description: str,
 ) -> Path:
-    candidate_directory = _candidate_directory(
-        workspace
-    ).resolve()
+    allowed_directory = directory.resolve()
     path = Path(evidence_path).expanduser().resolve()
 
     if not path.is_file():
         raise ValueError(
-            f"Candidate Evidence 파일을 찾을 수 없습니다: {path}"
+            f"{description} 파일을 찾을 수 없습니다: {path}"
         )
 
-    if not path.is_relative_to(candidate_directory):
+    if not path.is_relative_to(allowed_directory):
         raise ValueError(
-            "Candidate Evidence는 현재 Workspace의 "
-            ".proofcode/evidence/candidates 안에 있어야 합니다."
+            f"{description}는 현재 Workspace의 "
+            f"{allowed_directory} 안에 있어야 합니다."
         )
 
     return path
@@ -165,9 +200,7 @@ def _candidate_verification(
             "다릅니다. Candidate를 다시 검증하세요."
         )
 
-    verification = evidence.get(
-        "candidate_verification"
-    )
+    verification = evidence.get("candidate_verification")
 
     if not isinstance(verification, dict):
         raise ValueError(
@@ -194,7 +227,60 @@ def _candidate_verification(
     return verification
 
 
-def _summary_from_evidence(
+def _benchmark_result(
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        evidence.get("schema_version")
+        != BENCHMARK_EVIDENCE_SCHEMA_VERSION
+    ):
+        raise ValueError(
+            "Benchmark Evidence 형식 버전이 현재 ProofCode와 "
+            "다릅니다. Benchmark를 다시 실행하세요."
+        )
+
+    benchmark = evidence.get("candidate_benchmark")
+
+    if not isinstance(benchmark, dict):
+        raise ValueError(
+            "Benchmark Evidence에 측정 결과가 없습니다."
+        )
+
+    required = {
+        "verdict",
+        "observed_change",
+        "message",
+        "measured_runs",
+        "target_relative_path",
+        "candidate_path",
+        "candidate_sha256",
+        "candidate_evidence_path",
+        "workspace_fingerprint_after",
+        "baseline_stats",
+        "candidate_stats",
+    }
+    missing = required - benchmark.keys()
+
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise ValueError(
+            f"Benchmark Evidence 필수 항목이 없습니다: {names}"
+        )
+
+    if not isinstance(benchmark["baseline_stats"], dict):
+        raise ValueError(
+            "Benchmark Baseline 통계가 올바르지 않습니다."
+        )
+
+    if not isinstance(benchmark["candidate_stats"], dict):
+        raise ValueError(
+            "Benchmark Candidate 통계가 올바르지 않습니다."
+        )
+
+    return benchmark
+
+
+def _summary_from_candidate(
     path: Path,
     evidence: dict[str, Any],
 ) -> CandidateEvidenceSummary:
@@ -220,6 +306,55 @@ def _summary_from_evidence(
     )
 
 
+def _summary_from_benchmark(
+    path: Path,
+    evidence: dict[str, Any],
+) -> BenchmarkEvidenceSummary:
+    benchmark = _benchmark_result(evidence)
+    baseline_stats = benchmark["baseline_stats"]
+    candidate_stats = benchmark["candidate_stats"]
+
+    return BenchmarkEvidenceSummary(
+        evidence_path=str(path),
+        created_at_utc=str(
+            evidence.get("created_at_utc", "")
+        ),
+        verdict=str(benchmark["verdict"]),
+        observed_change=str(
+            benchmark["observed_change"]
+        ),
+        target_relative_path=str(
+            benchmark["target_relative_path"]
+        ),
+        candidate_path=str(
+            benchmark["candidate_path"]
+        ),
+        candidate_sha256=str(
+            benchmark["candidate_sha256"]
+        ),
+        candidate_evidence_path=str(
+            benchmark["candidate_evidence_path"]
+        ),
+        measured_runs=int(
+            benchmark["measured_runs"]
+        ),
+        baseline_median_seconds=float(
+            baseline_stats.get("median_seconds", 0.0)
+        ),
+        candidate_median_seconds=float(
+            candidate_stats.get("median_seconds", 0.0)
+        ),
+        observed_percent_change=(
+            None
+            if benchmark.get("observed_percent_change") is None
+            else float(
+                benchmark["observed_percent_change"]
+            )
+        ),
+        message=str(benchmark["message"]),
+    )
+
+
 def list_candidate_evidence(
     workspace_path: str,
 ) -> list[CandidateEvidenceSummary]:
@@ -238,10 +373,42 @@ def list_candidate_evidence(
                 "Candidate Evidence",
             )
             summaries.append(
-                _summary_from_evidence(path, evidence)
+                _summary_from_candidate(path, evidence)
             )
         except ValueError:
-            # 손상된 한 파일 때문에 전체 목록을 막지 않습니다.
+            continue
+
+    summaries.sort(
+        key=lambda item: (
+            item.created_at_utc,
+            item.evidence_path,
+        ),
+        reverse=True,
+    )
+    return summaries
+
+
+def list_benchmark_evidence(
+    workspace_path: str,
+) -> list[BenchmarkEvidenceSummary]:
+    workspace = _workspace(workspace_path)
+    directory = _benchmark_directory(workspace)
+
+    if not directory.is_dir():
+        return []
+
+    summaries: list[BenchmarkEvidenceSummary] = []
+
+    for path in directory.glob("*.json"):
+        try:
+            evidence = _read_json(
+                path,
+                "Benchmark Evidence",
+            )
+            summaries.append(
+                _summary_from_benchmark(path, evidence)
+            )
+        except ValueError:
             continue
 
     summaries.sort(
@@ -263,11 +430,74 @@ def _safe_file_part(value: str) -> str:
     return cleaned or "decision"
 
 
+def _load_benchmark_link(
+    workspace: Path,
+    benchmark_evidence_path: str | None,
+    candidate_path: Path,
+    candidate_verification: dict[str, Any],
+) -> tuple[
+    Path | None,
+    dict[str, Any] | None,
+    bool | None,
+]:
+    if not benchmark_evidence_path:
+        return None, None, None
+
+    path = _resolve_evidence_path(
+        workspace=workspace,
+        evidence_path=benchmark_evidence_path,
+        directory=_benchmark_directory(workspace),
+        description="Benchmark Evidence",
+    )
+    evidence = _read_json(path, "Benchmark Evidence")
+    benchmark = _benchmark_result(evidence)
+
+    if (
+        str(benchmark["candidate_sha256"])
+        != str(candidate_verification["candidate_sha256"])
+    ):
+        raise ValueError(
+            "Benchmark Evidence의 Candidate SHA-256이 "
+            "선택한 Candidate Evidence와 다릅니다."
+        )
+
+    if (
+        str(benchmark["target_relative_path"])
+        != str(candidate_verification["target_relative_path"])
+    ):
+        raise ValueError(
+            "Benchmark Evidence의 대상 파일이 "
+            "선택한 Candidate Evidence와 다릅니다."
+        )
+
+    recorded_candidate_path = Path(
+        str(benchmark["candidate_evidence_path"])
+    ).expanduser().resolve()
+
+    if recorded_candidate_path != candidate_path:
+        raise ValueError(
+            "Benchmark Evidence가 다른 Candidate Evidence를 "
+            "참조하고 있습니다."
+        )
+
+    current_fingerprint = workspace_fingerprint(str(workspace))
+    benchmark_context = str(
+        benchmark["workspace_fingerprint_after"]
+    )
+
+    return (
+        path,
+        benchmark,
+        current_fingerprint == benchmark_context,
+    )
+
+
 def record_candidate_decision(
     workspace_path: str,
     evidence_path: str,
     decision: str,
     reason: str,
+    benchmark_evidence_path: str | None = None,
 ) -> DecisionRecord:
     workspace = _workspace(workspace_path)
     normalized_decision = decision.strip().lower()
@@ -286,15 +516,19 @@ def record_candidate_decision(
             "결정 이유는 2000자 이하로 입력하세요."
         )
 
-    path = _resolve_candidate_evidence(
-        workspace,
-        evidence_path,
+    candidate_path = _resolve_evidence_path(
+        workspace=workspace,
+        evidence_path=evidence_path,
+        directory=_candidate_directory(workspace),
+        description="Candidate Evidence",
     )
-    evidence = _read_json(
-        path,
+    candidate_evidence = _read_json(
+        candidate_path,
         "Candidate Evidence",
     )
-    verification = _candidate_verification(evidence)
+    verification = _candidate_verification(
+        candidate_evidence
+    )
 
     verdict = str(verification["verdict"])
     passed = bool(verification["passed"])
@@ -304,9 +538,20 @@ def record_candidate_decision(
     current_fingerprint = workspace_fingerprint(
         str(workspace)
     )
-    context_matches = (
+    candidate_context_matches = (
         current_fingerprint
         == candidate_context_fingerprint
+    )
+
+    (
+        benchmark_path,
+        benchmark,
+        benchmark_context_matches,
+    ) = _load_benchmark_link(
+        workspace=workspace,
+        benchmark_evidence_path=benchmark_evidence_path,
+        candidate_path=candidate_path,
+        candidate_verification=verification,
     )
 
     if normalized_decision == "apply":
@@ -316,12 +561,36 @@ def record_candidate_decision(
                 "Candidate만 Apply로 기록할 수 있습니다."
             )
 
-        if not context_matches:
+        if not candidate_context_matches:
             raise ValueError(
                 "Candidate 검증 후 Workspace가 변경되었습니다. "
                 "Baseline과 Candidate를 다시 검증한 뒤 "
                 "Apply를 기록하세요."
             )
+
+        if benchmark is not None:
+            if str(benchmark["verdict"]) != "reviewable":
+                raise ValueError(
+                    "reviewable Benchmark Evidence만 Apply 결정에 "
+                    "연결할 수 있습니다."
+                )
+
+            if benchmark_context_matches is not True:
+                raise ValueError(
+                    "Benchmark 실행 후 Workspace가 변경되었습니다. "
+                    "Benchmark를 다시 실행한 뒤 Apply를 기록하세요."
+                )
+
+    benchmark_baseline_stats = (
+        benchmark["baseline_stats"]
+        if benchmark is not None
+        else None
+    )
+    benchmark_candidate_stats = (
+        benchmark["candidate_stats"]
+        if benchmark is not None
+        else None
+    )
 
     created_at = datetime.now(
         timezone.utc
@@ -329,7 +598,9 @@ def record_candidate_decision(
     timestamp = datetime.now(
         timezone.utc
     ).strftime("%Y%m%dT%H%M%SZ")
-    evidence_hash = _sha256_file(path)
+    candidate_evidence_hash = _sha256_file(
+        candidate_path
+    )
     short_uuid = uuid4().hex[:8]
     target_stem = _safe_file_part(
         Path(
@@ -353,8 +624,10 @@ def record_candidate_decision(
         reason=normalized_reason,
         created_at_utc=created_at,
         decision_path=str(decision_path),
-        candidate_evidence_path=str(path),
-        candidate_evidence_sha256=evidence_hash,
+        candidate_evidence_path=str(candidate_path),
+        candidate_evidence_sha256=(
+            candidate_evidence_hash
+        ),
         source_verdict=verdict,
         source_passed=passed,
         target_relative_path=str(
@@ -371,7 +644,77 @@ def record_candidate_decision(
             candidate_context_fingerprint
         ),
         workspace_matches_candidate_context=(
-            context_matches
+            candidate_context_matches
+        ),
+        benchmark_evidence_path=(
+            str(benchmark_path)
+            if benchmark_path is not None
+            else None
+        ),
+        benchmark_evidence_sha256=(
+            _sha256_file(benchmark_path)
+            if benchmark_path is not None
+            else None
+        ),
+        benchmark_verdict=(
+            str(benchmark["verdict"])
+            if benchmark is not None
+            else None
+        ),
+        benchmark_observed_change=(
+            str(benchmark["observed_change"])
+            if benchmark is not None
+            else None
+        ),
+        benchmark_measured_runs=(
+            int(benchmark["measured_runs"])
+            if benchmark is not None
+            else None
+        ),
+        benchmark_baseline_median_seconds=(
+            float(
+                benchmark_baseline_stats.get(
+                    "median_seconds",
+                    0.0,
+                )
+            )
+            if benchmark_baseline_stats is not None
+            else None
+        ),
+        benchmark_candidate_median_seconds=(
+            float(
+                benchmark_candidate_stats.get(
+                    "median_seconds",
+                    0.0,
+                )
+            )
+            if benchmark_candidate_stats is not None
+            else None
+        ),
+        benchmark_observed_percent_change=(
+            None
+            if benchmark is None
+            or benchmark.get(
+                "observed_percent_change"
+            ) is None
+            else float(
+                benchmark["observed_percent_change"]
+            )
+        ),
+        benchmark_context_fingerprint=(
+            str(
+                benchmark[
+                    "workspace_fingerprint_after"
+                ]
+            )
+            if benchmark is not None
+            else None
+        ),
+        workspace_matches_benchmark_context=(
+            benchmark_context_matches
+        ),
+        evidence_chain_complete=(
+            benchmark is not None
         ),
         automatic_code_change_performed=False,
         apply_mode="manual-approval-only",
@@ -401,17 +744,50 @@ def record_candidate_decision(
     return record
 
 
-def _summary_from_decision(
+def _normalize_decision(
     path: Path,
     payload: dict[str, Any],
-) -> DecisionSummary:
-    if payload.get("schema_version") != DECISION_SCHEMA_VERSION:
+) -> dict[str, Any]:
+    schema_version = str(
+        payload.get("schema_version", "")
+    )
+
+    if schema_version not in SUPPORTED_DECISION_SCHEMA_VERSIONS:
         raise ValueError("지원하지 않는 Decision 형식입니다.")
 
     decision = payload.get("developer_decision")
 
     if not isinstance(decision, dict):
         raise ValueError("Decision 기록이 없습니다.")
+
+    normalized = dict(decision)
+    normalized["decision_path"] = str(path)
+
+    defaults: dict[str, Any] = {
+        "benchmark_evidence_path": None,
+        "benchmark_evidence_sha256": None,
+        "benchmark_verdict": None,
+        "benchmark_observed_change": None,
+        "benchmark_measured_runs": None,
+        "benchmark_baseline_median_seconds": None,
+        "benchmark_candidate_median_seconds": None,
+        "benchmark_observed_percent_change": None,
+        "benchmark_context_fingerprint": None,
+        "workspace_matches_benchmark_context": None,
+        "evidence_chain_complete": False,
+    }
+
+    for key, value in defaults.items():
+        normalized.setdefault(key, value)
+
+    return normalized
+
+
+def _summary_from_decision(
+    path: Path,
+    payload: dict[str, Any],
+) -> DecisionSummary:
+    decision = _normalize_decision(path, payload)
 
     return DecisionSummary(
         decision_id=str(decision["decision_id"]),
@@ -435,6 +811,21 @@ def _summary_from_decision(
                 "workspace_matches_candidate_context"
             ]
         ),
+        benchmark_linked=bool(
+            decision["benchmark_evidence_path"]
+        ),
+        benchmark_observed_change=(
+            None
+            if decision["benchmark_observed_change"] is None
+            else str(
+                decision[
+                    "benchmark_observed_change"
+                ]
+            )
+        ),
+        evidence_chain_complete=bool(
+            decision["evidence_chain_complete"]
+        ),
     )
 
 
@@ -451,10 +842,7 @@ def list_decisions(
 
     for path in directory.glob("*.json"):
         try:
-            payload = _read_json(
-                path,
-                "Decision",
-            )
+            payload = _read_json(path, "Decision")
             summaries.append(
                 _summary_from_decision(path, payload)
             )
@@ -491,14 +879,6 @@ def read_decision(
         )
 
     payload = _read_json(path, "Decision")
+    decision = _normalize_decision(path, payload)
 
-    if payload.get("schema_version") != DECISION_SCHEMA_VERSION:
-        raise ValueError("지원하지 않는 Decision 형식입니다.")
-
-    decision = payload.get("developer_decision")
-
-    if not isinstance(decision, dict):
-        raise ValueError("Decision 기록이 없습니다.")
-
-    decision["decision_path"] = str(path)
     return DecisionRecord(**decision)

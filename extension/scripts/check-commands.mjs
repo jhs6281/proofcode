@@ -32,7 +32,8 @@ const requiredCommands = [
   "proofcode.verifyCandidateFile",
   "proofcode.recordCandidateDecision",
   "proofcode.viewDecisionHistory",
-  "proofcode.benchmarkCandidate"
+  "proofcode.benchmarkCandidate",
+  "proofcode.viewBenchmarkHistory"
 ];
 
 const contributed = new Set(

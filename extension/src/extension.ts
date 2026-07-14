@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 
 import {
+  BenchmarkEvidenceSummary,
   CandidateBenchmarkResult,
   CandidateEvidenceSummary,
   CandidateVerificationResult,
@@ -521,11 +522,20 @@ function verdictLabel(verdict: string): string {
 function formatDecisionReport(
   record: DecisionRecord
 ): string {
-  const context = record.workspace_matches_candidate_context
-    ? "일치"
-    : "불일치";
+  const candidateContext =
+    record.workspace_matches_candidate_context
+      ? "일치"
+      : "불일치";
+  const benchmarkLinked =
+    record.benchmark_evidence_path !== null;
+  const benchmarkContext =
+    record.workspace_matches_benchmark_context === null
+      ? "Benchmark 미연결"
+      : record.workspace_matches_benchmark_context
+        ? "일치"
+        : "불일치";
 
-  return [
+  const lines = [
     "# ProofCode Developer Decision",
     "",
     "## 결정",
@@ -535,7 +545,7 @@ function formatDecisionReport(
     `- 기록 시각: ${record.created_at_utc}`,
     `- Decision ID: \`${record.decision_id}\``,
     "",
-    "## 연결된 Candidate Evidence",
+    "## Candidate Evidence",
     "",
     `- 대상 파일: \`${record.target_relative_path}\``,
     `- Candidate: \`${record.candidate_path}\``,
@@ -545,11 +555,40 @@ function formatDecisionReport(
     `- Evidence SHA-256: \`${record.candidate_evidence_sha256}\``,
     `- Evidence 경로: \`${record.candidate_evidence_path}\``,
     "",
-    "## 결정 시점의 안전 확인",
+    "## Benchmark Evidence",
+    ""
+  ];
+
+  if (benchmarkLinked) {
+    lines.push(
+      `- 연결 상태: **연결됨**`,
+      `- Benchmark 판정: ${record.benchmark_verdict}`,
+      `- 관측 변화: ${record.benchmark_observed_change}`,
+      `- 측정 횟수: ${record.benchmark_measured_runs}회`,
+      `- Baseline 중앙값: ${record.benchmark_baseline_median_seconds}초`,
+      `- Candidate 중앙값: ${record.benchmark_candidate_median_seconds}초`,
+      `- 관측 변화율: ${record.benchmark_observed_percent_change ?? "없음"}%`,
+      `- Evidence SHA-256: \`${record.benchmark_evidence_sha256}\``,
+      `- Evidence 경로: \`${record.benchmark_evidence_path}\``
+    );
+  } else {
+    lines.push(
+      "- 연결 상태: 연결하지 않음",
+      "- 테스트 Evidence만으로 기록된 결정입니다."
+    );
+  }
+
+  lines.push(
     "",
-    `- Workspace와 검증 시점 일치: **${context}**`,
-    `- 현재 Workspace 지문: \`${record.workspace_fingerprint}\``,
-    `- Candidate 검증 지문: \`${record.candidate_context_fingerprint}\``,
+    "## Evidence 연결 상태",
+    "",
+    `- Candidate 검증 시점과 Workspace: **${candidateContext}**`,
+    `- Benchmark 시점과 Workspace: **${benchmarkContext}**`,
+    `- Candidate + Benchmark 연결 완성: ${
+      record.evidence_chain_complete
+        ? "예"
+        : "아니요"
+    }`,
     "",
     "## 코드 적용 상태",
     "",
@@ -560,13 +599,14 @@ function formatDecisionReport(
     }`,
     `- Apply 방식: \`${record.apply_mode}\``,
     "",
-    "> Apply는 '수동 적용을 승인했다'는 결정 기록입니다.",
-    "> ProofCode가 원본 코드를 자동으로 바꾸었다는 뜻이 아닙니다.",
+    "> Apply는 수동 적용 승인 기록입니다.",
+    "> ProofCode는 원본 코드를 자동으로 변경하지 않습니다.",
     "",
     `- 저장 경로: \`${record.decision_path}\``
-  ].join("\n");
-}
+  );
 
+  return lines.join("\n");
+}
 
 function formatDecisionSummaryReport(
   summary: DecisionSummary
@@ -579,19 +619,29 @@ function formatDecisionSummaryReport(
     `- 대상 파일: \`${summary.target_relative_path}\``,
     `- Candidate SHA-256: \`${summary.candidate_sha256}\``,
     `- 원래 판정: ${verdictLabel(summary.source_verdict)}`,
-    `- 검증 시점과 Workspace 일치: ${
+    `- Candidate 검증 시점 일치: ${
       summary.workspace_matches_candidate_context
+        ? "예"
+        : "아니요"
+    }`,
+    `- Benchmark 연결: ${
+      summary.benchmark_linked
+        ? "예"
+        : "아니요"
+    }`,
+    `- Benchmark 관측 결과: ${
+      summary.benchmark_observed_change ?? "없음"
+    }`,
+    `- Evidence 연결 완성: ${
+      summary.evidence_chain_complete
         ? "예"
         : "아니요"
     }`,
     `- 기록 시각: ${summary.created_at_utc}`,
     `- Decision ID: \`${summary.decision_id}\``,
-    `- 저장 경로: \`${summary.decision_path}\``,
-    "",
-    "> 자세한 원본 기록은 위 JSON 파일에 저장되어 있습니다."
+    `- 저장 경로: \`${summary.decision_path}\``
   ].join("\n");
 }
-
 
 function evidenceQuickPickLabel(
   evidence: CandidateEvidenceSummary
@@ -732,6 +782,33 @@ function formatBenchmarkReport(
     "",
     `> 격리 범위: \`${result.security_scope}\``,
     "> ProofCode는 Benchmark 결과만으로 코드를 자동 적용하지 않습니다."
+  ].join("\n");
+}
+
+
+
+function formatBenchmarkHistoryReport(
+  benchmark: BenchmarkEvidenceSummary
+): string {
+  return [
+    "# ProofCode Benchmark Evidence",
+    "",
+    `- 상태: **${verdictLabel(benchmark.verdict)}**`,
+    `- 관측 변화: ${benchmark.observed_change}`,
+    `- 대상 파일: \`${benchmark.target_relative_path}\``,
+    `- Candidate: \`${benchmark.candidate_path}\``,
+    `- Candidate SHA-256: \`${benchmark.candidate_sha256}\``,
+    `- 반복 측정: ${benchmark.measured_runs}회`,
+    `- Baseline 중앙값: ${benchmark.baseline_median_seconds}초`,
+    `- Candidate 중앙값: ${benchmark.candidate_median_seconds}초`,
+    `- 관측 변화율: ${benchmark.observed_percent_change ?? "없음"}%`,
+    `- 설명: ${benchmark.message}`,
+    `- Candidate Evidence: \`${benchmark.candidate_evidence_path}\``,
+    `- Benchmark Evidence: \`${benchmark.evidence_path}\``,
+    `- 생성 시각: ${benchmark.created_at_utc}`,
+    "",
+    "> 이 결과는 관측된 테스트 실행 시간 비교입니다.",
+    "> 특정 함수의 성능 개선을 확정하지 않습니다."
   ].join("\n");
 }
 
@@ -1250,11 +1327,71 @@ export function activate(
             return;
           }
 
+          const benchmarkResponse =
+            await createClient().listBenchmarkEvidence();
+          const matchingBenchmarks = (
+            benchmarkResponse.data?.benchmark_evidence ?? []
+          ).filter(
+            (item) =>
+              item.candidate_sha256
+                === evidence.candidate_sha256
+              && item.target_relative_path
+                === evidence.target_relative_path
+              && item.candidate_evidence_path
+                === evidence.evidence_path
+          );
+
+          let benchmarkEvidencePath:
+            string | undefined;
+
+          if (matchingBenchmarks.length > 0) {
+            const benchmarkChoice =
+              await vscode.window.showQuickPick(
+                [
+                  ...matchingBenchmarks.map(
+                    (benchmark) => ({
+                      label:
+                        `${benchmark.observed_change} · ` +
+                        `${benchmark.measured_runs}회`,
+                      description:
+                        benchmark.created_at_utc
+                        || "시간 정보 없음",
+                      detail:
+                        `Baseline ${benchmark.baseline_median_seconds}초 · ` +
+                        `Candidate ${benchmark.candidate_median_seconds}초`,
+                      benchmark
+                    })
+                  ),
+                  {
+                    label: "Benchmark 연결 없이 기록",
+                    description:
+                      "Candidate 테스트 Evidence만 연결",
+                    detail:
+                      "Benchmark를 아직 실행하지 않았거나 연결하지 않습니다.",
+                    benchmark: undefined
+                  }
+                ],
+                {
+                  title: "Benchmark Evidence 연결",
+                  placeHolder:
+                    "Decision에 연결할 Benchmark를 선택하세요."
+                }
+              );
+
+            if (!benchmarkChoice) {
+              return;
+            }
+
+            benchmarkEvidencePath =
+              benchmarkChoice.benchmark?.evidence_path;
+          }
+
           const recordResponse =
             await createClient().recordCandidateDecision(
               evidence.evidence_path,
               selectedDecision.decision,
-              reason
+              reason,
+              benchmarkEvidencePath
             );
           const record =
             recordResponse.data?.developer_decision;
@@ -1443,6 +1580,63 @@ export function activate(
       }
     );
 
+
+  const viewBenchmarkHistoryCommand =
+    vscode.commands.registerCommand(
+      "proofcode.viewBenchmarkHistory",
+      async () => {
+        try {
+          const response =
+            await createClient().listBenchmarkEvidence();
+          const benchmarks =
+            response.data?.benchmark_evidence ?? [];
+
+          if (benchmarks.length === 0) {
+            void vscode.window.showInformationMessage(
+              "저장된 Benchmark Evidence가 없습니다."
+            );
+            return;
+          }
+
+          const selected =
+            await vscode.window.showQuickPick(
+              benchmarks.map((benchmark) => ({
+                label:
+                  `${benchmark.observed_change} · ` +
+                  benchmark.target_relative_path,
+                description:
+                  benchmark.created_at_utc
+                  || "시간 정보 없음",
+                detail:
+                  `${benchmark.measured_runs}회 · ` +
+                  `Baseline ${benchmark.baseline_median_seconds}초 · ` +
+                  `Candidate ${benchmark.candidate_median_seconds}초`,
+                benchmark
+              })),
+              {
+                title: "ProofCode Benchmark History",
+                placeHolder:
+                  "확인할 Benchmark Evidence를 선택하세요.",
+                matchOnDescription: true,
+                matchOnDetail: true
+              }
+            );
+
+          if (selected) {
+            await showMarkdown(
+              formatBenchmarkHistoryReport(
+                selected.benchmark
+              )
+            );
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Benchmark History 확인 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
   context.subscriptions.push(
     pingCommand,
     analyzeFileCommand,
@@ -1453,7 +1647,8 @@ export function activate(
     verifyCandidateCommand,
     recordDecisionCommand,
     viewDecisionHistoryCommand,
-    benchmarkCandidateCommand
+    benchmarkCandidateCommand,
+    viewBenchmarkHistoryCommand
   );
 }
 

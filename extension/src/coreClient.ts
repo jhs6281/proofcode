@@ -180,6 +180,26 @@ export interface CandidateEvidenceSummary {
   message: string;
 }
 
+export interface BenchmarkEvidenceSummary {
+  evidence_path: string;
+  created_at_utc: string;
+  verdict: "reviewable" | "failed" | "blocked";
+  observed_change:
+    | "faster"
+    | "slower"
+    | "similar"
+    | "not_comparable";
+  target_relative_path: string;
+  candidate_path: string;
+  candidate_sha256: string;
+  candidate_evidence_path: string;
+  measured_runs: number;
+  baseline_median_seconds: number;
+  candidate_median_seconds: number;
+  observed_percent_change: number | null;
+  message: string;
+}
+
 export interface DecisionRecord {
   decision_id: string;
   decision: DeveloperDecision;
@@ -196,6 +216,17 @@ export interface DecisionRecord {
   workspace_fingerprint: string;
   candidate_context_fingerprint: string;
   workspace_matches_candidate_context: boolean;
+  benchmark_evidence_path: string | null;
+  benchmark_evidence_sha256: string | null;
+  benchmark_verdict: string | null;
+  benchmark_observed_change: string | null;
+  benchmark_measured_runs: number | null;
+  benchmark_baseline_median_seconds: number | null;
+  benchmark_candidate_median_seconds: number | null;
+  benchmark_observed_percent_change: number | null;
+  benchmark_context_fingerprint: string | null;
+  workspace_matches_benchmark_context: boolean | null;
+  evidence_chain_complete: boolean;
   automatic_code_change_performed: boolean;
   apply_mode: string;
 }
@@ -210,6 +241,9 @@ export interface DecisionSummary {
   candidate_sha256: string;
   source_verdict: string;
   workspace_matches_candidate_context: boolean;
+  benchmark_linked: boolean;
+  benchmark_observed_change: string | null;
+  evidence_chain_complete: boolean;
 }
 
 export interface BenchmarkRun {
@@ -434,23 +468,44 @@ export class CoreClient {
     ]);
   }
 
+  public listBenchmarkEvidence(): Promise<
+    CoreEnvelope<{
+      benchmark_evidence: BenchmarkEvidenceSummary[];
+    }>
+  > {
+    return this.run([
+      "list-benchmark-evidence",
+      this.workspaceRoot
+    ]);
+  }
+
   public recordCandidateDecision(
     evidencePath: string,
     decision: DeveloperDecision,
-    reason: string
+    reason: string,
+    benchmarkEvidencePath?: string
   ): Promise<
     CoreEnvelope<{
       developer_decision: DecisionRecord;
     }>
   > {
-    return this.run([
+    const args = [
       "record-decision",
       this.workspaceRoot,
       evidencePath,
       decision,
       "--reason",
       reason
-    ]);
+    ];
+
+    if (benchmarkEvidencePath) {
+      args.push(
+        "--benchmark-evidence",
+        benchmarkEvidencePath
+      );
+    }
+
+    return this.run(args);
   }
 
   public listDecisions(): Promise<
