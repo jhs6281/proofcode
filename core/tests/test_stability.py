@@ -21,6 +21,9 @@ REQUIRED_COMMANDS = {
     "proofcode.viewDecisionHistory",
     "proofcode.benchmarkCandidate",
     "proofcode.viewBenchmarkHistory",
+    "proofcode.checkSandboxReadiness",
+    "proofcode.buildSandboxImage",
+    "proofcode.verifyContainerSandbox",
 }
 
 
@@ -29,7 +32,7 @@ def repository_root() -> Path:
 
 
 def test_app_and_protocol_versions_are_separate() -> None:
-    assert APP_VERSION == "0.11.0"
+    assert APP_VERSION == "0.12.0"
     assert PROTOCOL_VERSION == "1"
     assert APP_VERSION != PROTOCOL_VERSION
 

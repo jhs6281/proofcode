@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify code changes with reproducible evidence before developers approve them.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -22,7 +22,10 @@
     "onCommand:proofcode.recordCandidateDecision",
     "onCommand:proofcode.viewDecisionHistory",
     "onCommand:proofcode.benchmarkCandidate",
-    "onCommand:proofcode.viewBenchmarkHistory"
+    "onCommand:proofcode.viewBenchmarkHistory",
+    "onCommand:proofcode.checkSandboxReadiness",
+    "onCommand:proofcode.buildSandboxImage",
+    "onCommand:proofcode.verifyContainerSandbox"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -70,6 +73,18 @@
       {
         "command": "proofcode.viewBenchmarkHistory",
         "title": "ProofCode: View Benchmark History"
+      },
+      {
+        "command": "proofcode.checkSandboxReadiness",
+        "title": "ProofCode: Check Sandbox Readiness"
+      },
+      {
+        "command": "proofcode.buildSandboxImage",
+        "title": "ProofCode: Build Sandbox Image"
+      },
+      {
+        "command": "proofcode.verifyContainerSandbox",
+        "title": "ProofCode: Verify Container Sandbox"
       }
     ],
     "configuration": {
@@ -103,6 +118,37 @@
           "minimum": 0,
           "maximum": 5,
           "description": "Number of warm-up runs before measured benchmarks."
+        },
+        "proofcode.sandboxImage": {
+          "type": "string",
+          "default": "proofcode-sandbox-python:0.12.0",
+          "description": "Docker image used by the ProofCode container sandbox."
+        },
+        "proofcode.sandboxCpus": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.25,
+          "maximum": 4,
+          "description": "Maximum CPU cores available to the sandbox container."
+        },
+        "proofcode.sandboxMemory": {
+          "type": "string",
+          "default": "512m",
+          "description": "Memory limit for the sandbox container. Memory swap is set to the same value."
+        },
+        "proofcode.sandboxPidsLimit": {
+          "type": "number",
+          "default": 128,
+          "minimum": 16,
+          "maximum": 512,
+          "description": "Maximum number of processes available to the sandbox container."
+        },
+        "proofcode.sandboxTimeoutSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "Maximum execution time for the sandbox container."
         }
       }
     }

@@ -33,7 +33,10 @@ const requiredCommands = [
   "proofcode.recordCandidateDecision",
   "proofcode.viewDecisionHistory",
   "proofcode.benchmarkCandidate",
-  "proofcode.viewBenchmarkHistory"
+  "proofcode.viewBenchmarkHistory",
+  "proofcode.checkSandboxReadiness",
+  "proofcode.buildSandboxImage",
+  "proofcode.verifyContainerSandbox"
 ];
 
 const contributed = new Set(

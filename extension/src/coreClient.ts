@@ -301,6 +301,95 @@ export interface CandidateBenchmarkResult {
   security_scope: string;
 }
 
+export interface SandboxPolicy {
+  image: string;
+  network_mode: "none";
+  cpus: number;
+  memory: string;
+  memory_swap: string;
+  pids_limit: number;
+  timeout_seconds: number;
+  read_only_root: boolean;
+  no_new_privileges: boolean;
+  cap_drop_all: boolean;
+  container_user: string;
+  tmpfs: string;
+  init_process: boolean;
+  original_workspace_mounted: boolean;
+}
+
+export interface SandboxReadiness {
+  ready: boolean;
+  docker_cli_available: boolean;
+  docker_daemon_available: boolean;
+  image_available: boolean;
+  docker_cli_path: string | null;
+  docker_server_version: string | null;
+  docker_operating_system: string | null;
+  image: string;
+  image_id: string | null;
+  image_repo_digests: string[];
+  policy_valid: boolean;
+  checks: Record<string, boolean>;
+  errors: string[];
+}
+
+export interface SandboxBuildResult {
+  passed: boolean;
+  image: string;
+  image_id: string | null;
+  image_repo_digests: string[];
+  duration_seconds: number;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  message: string;
+}
+
+export interface SandboxRunResult {
+  status:
+    | "passed"
+    | "failed"
+    | "timeout"
+    | "oom_killed"
+    | "blocked"
+    | "cleanup_failed"
+    | "sandbox_error";
+  passed: boolean;
+  termination_reason: string;
+  exit_code: number | null;
+  timed_out: boolean;
+  oom_killed: boolean;
+  duration_seconds: number;
+  container_id: string | null;
+  container_name: string;
+  image: string;
+  image_id: string | null;
+  image_repo_digests: string[];
+  command: string[];
+  container_working_directory: string;
+  policy: SandboxPolicy;
+  stdout: string;
+  stderr: string;
+  container_error: string | null;
+  container_started_at: string | null;
+  container_finished_at: string | null;
+  original_workspace_fingerprint_before: string;
+  original_workspace_fingerprint_after: string;
+  original_workspace_changed: boolean;
+  sandbox_workspace_fingerprint_before: string;
+  sandbox_workspace_fingerprint_after: string;
+  sandbox_source_changed: boolean;
+  original_workspace_mounted: boolean;
+  mounted_sources: string[];
+  container_removed: boolean;
+  temporary_directory_removed: boolean;
+  cleanup_errors: string[];
+  evidence_saved: boolean;
+  evidence_path: string | null;
+  message: string;
+}
+
 export function resolvePythonPath(
   configuredPath: string,
   workspaceRoot: string
@@ -551,7 +640,67 @@ export class CoreClient {
     ]);
   }
 
-  private run<T>(args: string[]): Promise<CoreEnvelope<T>> {
+  public checkSandboxReadiness(
+    image: string
+  ): Promise<
+    CoreEnvelope<{ sandbox_readiness: SandboxReadiness }>
+  > {
+    return this.run([
+      "sandbox-status",
+      this.workspaceRoot,
+      "--image",
+      image
+    ]);
+  }
+
+  public buildSandboxImage(
+    image: string
+  ): Promise<
+    CoreEnvelope<{ sandbox_image_build: SandboxBuildResult }>
+  > {
+    return this.run(
+      [
+        "build-sandbox-image",
+        this.workspaceRoot,
+        "--image",
+        image
+      ],
+      700_000
+    );
+  }
+
+  public verifyContainerSandbox(
+    image: string,
+    cpus: number,
+    memory: string,
+    pidsLimit: number,
+    timeoutSeconds: number
+  ): Promise<
+    CoreEnvelope<{ sandbox_verification: SandboxRunResult }>
+  > {
+    return this.run(
+      [
+        "verify-sandbox",
+        this.workspaceRoot,
+        "--image",
+        image,
+        "--cpus",
+        String(cpus),
+        "--memory",
+        memory,
+        "--pids-limit",
+        String(pidsLimit),
+        "--timeout",
+        String(timeoutSeconds)
+      ],
+      (timeoutSeconds + 120) * 1000
+    );
+  }
+
+  private run<T>(
+    args: string[],
+    timeoutMs = this.timeoutMs
+  ): Promise<CoreEnvelope<T>> {
     const coreSrc = path.join(
       this.workspaceRoot,
       "core",
@@ -579,14 +728,20 @@ export class CoreClient {
         }
       );
 
-      this.collect(child, resolve, reject);
+      this.collect(
+        child,
+        resolve,
+        reject,
+        timeoutMs
+      );
     });
   }
 
   private collect<T>(
     child: ChildProcessWithoutNullStreams,
     resolve: (value: CoreEnvelope<T>) => void,
-    reject: (reason: Error) => void
+    reject: (reason: Error) => void,
+    timeoutMs: number
   ): void {
     let stdout = "";
     let stderr = "";
@@ -603,10 +758,10 @@ export class CoreClient {
       child.kill();
       fail(
         new Error(
-          `ProofCode Core timed out after ${this.timeoutMs}ms.`
+          `ProofCode Core timed out after ${timeoutMs}ms.`
         )
       );
-    }, this.timeoutMs);
+    }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");

@@ -14,6 +14,9 @@ import {
   CoreClient,
   FileAnalysis,
   Hotspot,
+  SandboxBuildResult,
+  SandboxReadiness,
+  SandboxRunResult,
   VerificationResult,
   WorkspaceAnalysis
 } from "./coreClient";
@@ -809,6 +812,214 @@ function formatBenchmarkHistoryReport(
     "",
     "> 이 결과는 관측된 테스트 실행 시간 비교입니다.",
     "> 특정 함수의 성능 개선을 확정하지 않습니다."
+  ].join("\n");
+}
+
+
+
+function checkMark(value: boolean): string {
+  return value ? "✅" : "❌";
+}
+
+
+function formatSandboxReadinessReport(
+  readiness: SandboxReadiness
+): string {
+  const checks = readiness.checks;
+  const errors = readiness.errors.length > 0
+    ? readiness.errors.map((item) => `- ${item}`)
+    : ["- 오류 없음"];
+
+  return [
+    "# ProofCode Container Sandbox Readiness",
+    "",
+    "## 종합 판정",
+    "",
+    `- 준비 상태: **${readiness.ready ? "✅ 준비 완료" : "❌ 준비 필요"}**`,
+    `- Docker CLI: ${checkMark(readiness.docker_cli_available)}`,
+    `- Docker daemon: ${checkMark(readiness.docker_daemon_available)}`,
+    `- Sandbox image: ${checkMark(readiness.image_available)}`,
+    `- 정책 검증: ${checkMark(readiness.policy_valid)}`,
+    "",
+    "## 요청한 보안 항목",
+    "",
+    `- 컨테이너 내부 실행: ${checkMark(checks.container_runtime ?? false)}`,
+    `- 네트워크 접근 제한: ${checkMark(checks.network_disabled ?? false)}`,
+    `- CPU 사용 제한: ${checkMark(checks.cpu_limited ?? false)}`,
+    `- 메모리 사용 제한: ${checkMark(checks.memory_limited ?? false)}`,
+    `- Swap 추가 사용 제한: ${checkMark(checks.swap_limited ?? false)}`,
+    `- 실행 시간 제한: ${checkMark(checks.time_limited ?? false)}`,
+    `- 원본 Workspace 미마운트: ${checkMark(checks.original_workspace_not_mounted ?? false)}`,
+    `- Root filesystem 읽기 전용: ${checkMark(checks.read_only_root ?? false)}`,
+    `- Capability 제거: ${checkMark(checks.capabilities_dropped ?? false)}`,
+    `- 권한 상승 차단: ${checkMark(checks.no_new_privileges ?? false)}`,
+    `- PID 개수 제한: ${checkMark(checks.pids_limited ?? false)}`,
+    `- 임시 환경 삭제 검증 기능: ${checkMark(checks.cleanup_verification_enabled ?? false)}`,
+    `- 종료 원인 기록 기능: ${checkMark(checks.termination_logging_enabled ?? false)}`,
+    "",
+    "## Docker 환경",
+    "",
+    `- Docker CLI 경로: \`${readiness.docker_cli_path ?? "없음"}\``,
+    `- Docker Server: ${readiness.docker_server_version ?? "확인 불가"}`,
+    `- Docker OS: ${readiness.docker_operating_system ?? "확인 불가"}`,
+    `- Image: \`${readiness.image}\``,
+    `- Image ID: \`${readiness.image_id ?? "없음"}\``,
+    `- Repo Digests: ${
+      readiness.image_repo_digests.length > 0
+        ? readiness.image_repo_digests.join(", ")
+        : "없음"
+    }`,
+    "",
+    "## 준비되지 않은 이유",
+    "",
+    ...errors,
+    "",
+    readiness.ready
+      ? "> 다음으로 ProofCode: Verify Container Sandbox를 실행하세요."
+      : "> Docker Desktop 실행 상태와 Sandbox image를 확인하세요."
+  ].join("\n");
+}
+
+
+function formatSandboxBuildReport(
+  result: SandboxBuildResult
+): string {
+  return [
+    "# ProofCode Sandbox Image Build",
+    "",
+    `- 상태: **${result.passed ? "✅ 성공" : "❌ 실패"}**`,
+    `- 설명: ${result.message}`,
+    `- Image: \`${result.image}\``,
+    `- Image ID: \`${result.image_id ?? "없음"}\``,
+    `- Repo Digests: ${
+      result.image_repo_digests.length > 0
+        ? result.image_repo_digests.join(", ")
+        : "없음"
+    }`,
+    `- 종료 코드: ${result.exit_code ?? "없음"}`,
+    `- 실행 시간: ${result.duration_seconds}초`,
+    "",
+    "## 표준 출력",
+    "",
+    "```text",
+    truncateOutput(result.stdout.trim() || "(출력 없음)"),
+    "```",
+    "",
+    "## 오류 출력",
+    "",
+    "```text",
+    truncateOutput(result.stderr.trim() || "(출력 없음)"),
+    "```"
+  ].join("\n");
+}
+
+
+function formatSandboxRunReport(
+  result: SandboxRunResult
+): string {
+  const runtimeChecks = {
+    container: result.container_id !== null,
+    network: result.policy.network_mode === "none",
+    cpu: result.policy.cpus > 0,
+    memory:
+      result.policy.memory.length > 0
+      && result.policy.memory_swap === result.policy.memory,
+    timeout: result.policy.timeout_seconds > 0,
+    workspace:
+      result.original_workspace_mounted === false
+      && result.original_workspace_changed === false,
+    cleanup:
+      result.container_removed
+      && result.temporary_directory_removed,
+    logs:
+      result.termination_reason.length > 0
+      && result.exit_code !== undefined
+  };
+
+  return [
+    "# ProofCode Container Sandbox Verification",
+    "",
+    "## 종합 판정",
+    "",
+    `- 상태: **${result.passed ? "✅ 통과" : "❌ 통과하지 못함"}**`,
+    `- 실행 상태: ${result.status}`,
+    `- 종료 원인: \`${result.termination_reason}\``,
+    `- 설명: ${result.message}`,
+    "",
+    "## 요청한 8개 항목 실제 실행 확인",
+    "",
+    `- 컨테이너 내부 실행: ${checkMark(runtimeChecks.container)}`,
+    `- 네트워크 접근 제한: ${checkMark(runtimeChecks.network)}`,
+    `- CPU 사용 제한: ${checkMark(runtimeChecks.cpu)}`,
+    `- 메모리 사용 제한: ${checkMark(runtimeChecks.memory)}`,
+    `- 실행 시간 제한: ${checkMark(runtimeChecks.timeout)}`,
+    `- 원본 Workspace 쓰기 방지: ${checkMark(runtimeChecks.workspace)}`,
+    `- 임시 환경 완전 삭제 확인: ${checkMark(runtimeChecks.cleanup)}`,
+    `- 실행 로그와 종료 원인 기록: ${checkMark(runtimeChecks.logs)}`,
+    "",
+    "## 적용 정책",
+    "",
+    `- Network: \`${result.policy.network_mode}\``,
+    `- CPU: ${result.policy.cpus}`,
+    `- Memory: ${result.policy.memory}`,
+    `- Memory + Swap: ${result.policy.memory_swap}`,
+    `- PID limit: ${result.policy.pids_limit}`,
+    `- Timeout: ${result.policy.timeout_seconds}초`,
+    `- Root filesystem read-only: ${result.policy.read_only_root ? "예" : "아니요"}`,
+    `- Drop all capabilities: ${result.policy.cap_drop_all ? "예" : "아니요"}`,
+    `- No new privileges: ${result.policy.no_new_privileges ? "예" : "아니요"}`,
+    `- Container user: ${result.policy.container_user}`,
+    `- 원본 Workspace mount: ${result.original_workspace_mounted ? "예" : "아니요"}`,
+    "",
+    "## 컨테이너 종료 정보",
+    "",
+    `- Container ID: \`${result.container_id ?? "없음"}\``,
+    `- Container name: \`${result.container_name}\``,
+    `- Image: \`${result.image}\``,
+    `- Image ID: \`${result.image_id ?? "없음"}\``,
+    `- Exit code: ${result.exit_code ?? "없음"}`,
+    `- Timeout: ${result.timed_out ? "예" : "아니요"}`,
+    `- OOMKilled: ${result.oom_killed ? "예" : "아니요"}`,
+    `- Container error: ${result.container_error ?? "없음"}`,
+    `- StartedAt: ${result.container_started_at ?? "없음"}`,
+    `- FinishedAt: ${result.container_finished_at ?? "없음"}`,
+    `- 실행 시간: ${result.duration_seconds}초`,
+    "",
+    "## 원본과 임시 환경 보호",
+    "",
+    `- 원본 변경 감지: ${result.original_workspace_changed ? "예" : "아니요"}`,
+    `- Sandbox 소스 변경 감지: ${result.sandbox_source_changed ? "예" : "아니요"}`,
+    `- Container 삭제 확인: ${result.container_removed ? "성공" : "실패"}`,
+    `- 임시 폴더 삭제 확인: ${result.temporary_directory_removed ? "성공" : "실패"}`,
+    `- Mount source: ${
+      result.mounted_sources.length > 0
+        ? result.mounted_sources.join(", ")
+        : "없음"
+    }`,
+    `- Cleanup 오류: ${
+      result.cleanup_errors.length > 0
+        ? result.cleanup_errors.join("; ")
+        : "없음"
+    }`,
+    "",
+    "## 표준 출력",
+    "",
+    "```text",
+    truncateOutput(result.stdout.trim() || "(출력 없음)"),
+    "```",
+    "",
+    "## 오류 출력",
+    "",
+    "```text",
+    truncateOutput(result.stderr.trim() || "(출력 없음)"),
+    "```",
+    "",
+    `- Evidence 저장: ${result.evidence_saved ? "예" : "아니요"}`,
+    `- Evidence 경로: \`${result.evidence_path ?? "없음"}\``,
+    "",
+    result.passed
+      ? "> 8개 Sandbox 항목의 실제 실행 검증을 통과했습니다."
+      : "> AI 생성 코드를 실행하지 말고 실패 원인을 먼저 해결해야 합니다."
   ].join("\n");
 }
 
@@ -1637,6 +1848,166 @@ export function activate(
       }
     );
 
+
+  const checkSandboxReadinessCommand =
+    vscode.commands.registerCommand(
+      "proofcode.checkSandboxReadiness",
+      async () => {
+        try {
+          const config =
+            vscode.workspace.getConfiguration("proofcode");
+          const image = config.get<string>(
+            "sandboxImage",
+            "proofcode-sandbox-python:0.12.0"
+          );
+
+          const response =
+            await createClient().checkSandboxReadiness(
+              image
+            );
+          const readiness =
+            response.data?.sandbox_readiness;
+
+          if (!readiness) {
+            throw new Error(
+              "Sandbox Readiness 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatSandboxReadinessReport(readiness)
+          );
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Sandbox 준비 상태 확인 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
+  const buildSandboxImageCommand =
+    vscode.commands.registerCommand(
+      "proofcode.buildSandboxImage",
+      async () => {
+        const answer =
+          await vscode.window.showWarningMessage(
+            "Sandbox image를 빌드합니다. " +
+            "최초 빌드에서는 Python image와 pytest를 " +
+            "다운로드하므로 인터넷이 필요합니다.",
+            { modal: true },
+            "빌드"
+          );
+
+        if (answer !== "빌드") {
+          return;
+        }
+
+        try {
+          const config =
+            vscode.workspace.getConfiguration("proofcode");
+          const image = config.get<string>(
+            "sandboxImage",
+            "proofcode-sandbox-python:0.12.0"
+          );
+
+          const response =
+            await vscode.window.withProgress(
+              {
+                location:
+                  vscode.ProgressLocation.Notification,
+                title:
+                  "ProofCode Sandbox image 빌드 중…",
+                cancellable: false
+              },
+              () => createClient().buildSandboxImage(
+                image
+              )
+            );
+          const result =
+            response.data?.sandbox_image_build;
+
+          if (!result) {
+            throw new Error(
+              "Sandbox image build 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatSandboxBuildReport(result)
+          );
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Sandbox image build 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
+  const verifyContainerSandboxCommand =
+    vscode.commands.registerCommand(
+      "proofcode.verifyContainerSandbox",
+      async () => {
+        try {
+          const config =
+            vscode.workspace.getConfiguration("proofcode");
+          const image = config.get<string>(
+            "sandboxImage",
+            "proofcode-sandbox-python:0.12.0"
+          );
+          const cpus = config.get<number>(
+            "sandboxCpus",
+            1.0
+          );
+          const memory = config.get<string>(
+            "sandboxMemory",
+            "512m"
+          );
+          const pidsLimit = config.get<number>(
+            "sandboxPidsLimit",
+            128
+          );
+          const timeoutSeconds = config.get<number>(
+            "sandboxTimeoutSeconds",
+            60
+          );
+
+          const response =
+            await vscode.window.withProgress(
+              {
+                location:
+                  vscode.ProgressLocation.Notification,
+                title:
+                  "ProofCode Container Sandbox 검증 중…",
+                cancellable: false
+              },
+              () => createClient().verifyContainerSandbox(
+                image,
+                cpus,
+                memory,
+                pidsLimit,
+                timeoutSeconds
+              )
+            );
+          const result =
+            response.data?.sandbox_verification;
+
+          if (!result) {
+            throw new Error(
+              "Sandbox 검증 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatSandboxRunReport(result)
+          );
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Container Sandbox 검증 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
   context.subscriptions.push(
     pingCommand,
     analyzeFileCommand,
@@ -1648,7 +2019,10 @@ export function activate(
     recordDecisionCommand,
     viewDecisionHistoryCommand,
     benchmarkCandidateCommand,
-    viewBenchmarkHistoryCommand
+    viewBenchmarkHistoryCommand,
+    checkSandboxReadinessCommand,
+    buildSandboxImageCommand,
+    verifyContainerSandboxCommand
   );
 }
 

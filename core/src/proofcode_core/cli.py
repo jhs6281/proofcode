@@ -19,6 +19,13 @@ from proofcode_core.decision import (
     read_decision,
     record_candidate_decision,
 )
+from proofcode_core.sandbox import (
+    DEFAULT_SANDBOX_IMAGE,
+    SandboxPolicy,
+    build_sandbox_image,
+    check_sandbox_readiness,
+    verify_container_sandbox,
+)
 from proofcode_core.verifier import verify_workspace
 from proofcode_core.workspace import analyze_workspace
 
@@ -135,6 +142,53 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
     )
     benchmark_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+    )
+
+
+    sandbox_status_parser = subparsers.add_parser(
+        "sandbox-status"
+    )
+    sandbox_status_parser.add_argument("workspace_path")
+    sandbox_status_parser.add_argument(
+        "--image",
+        default=DEFAULT_SANDBOX_IMAGE,
+    )
+
+    sandbox_build_parser = subparsers.add_parser(
+        "build-sandbox-image"
+    )
+    sandbox_build_parser.add_argument("workspace_path")
+    sandbox_build_parser.add_argument(
+        "--image",
+        default=DEFAULT_SANDBOX_IMAGE,
+    )
+
+    sandbox_verify_parser = subparsers.add_parser(
+        "verify-sandbox"
+    )
+    sandbox_verify_parser.add_argument("workspace_path")
+    sandbox_verify_parser.add_argument(
+        "--image",
+        default=DEFAULT_SANDBOX_IMAGE,
+    )
+    sandbox_verify_parser.add_argument(
+        "--cpus",
+        type=float,
+        default=1.0,
+    )
+    sandbox_verify_parser.add_argument(
+        "--memory",
+        default="512m",
+    )
+    sandbox_verify_parser.add_argument(
+        "--pids-limit",
+        type=int,
+        default=128,
+    )
+    sandbox_verify_parser.add_argument(
         "--timeout",
         type=int,
         default=60,
@@ -309,6 +363,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                         warmup_runs=args.warmups,
                         timeout_seconds=args.timeout,
                     ).to_dict(),
+                },
+            )
+
+        elif args.command == "sandbox-status":
+            policy = SandboxPolicy(image=args.image)
+            payload = success_payload(
+                "sandbox_readiness",
+                {
+                    "sandbox_readiness": (
+                        check_sandbox_readiness(
+                            args.workspace_path,
+                            policy,
+                        ).to_dict()
+                    ),
+                },
+            )
+
+        elif args.command == "build-sandbox-image":
+            payload = success_payload(
+                "sandbox_image_build",
+                {
+                    "sandbox_image_build": (
+                        build_sandbox_image(
+                            args.workspace_path,
+                            image=args.image,
+                        ).to_dict()
+                    ),
+                },
+            )
+
+        elif args.command == "verify-sandbox":
+            policy = SandboxPolicy(
+                image=args.image,
+                cpus=args.cpus,
+                memory=args.memory,
+                memory_swap=args.memory,
+                pids_limit=args.pids_limit,
+                timeout_seconds=args.timeout,
+            )
+            payload = success_payload(
+                "sandbox_verification",
+                {
+                    "sandbox_verification": (
+                        verify_container_sandbox(
+                            args.workspace_path,
+                            policy,
+                        ).to_dict()
+                    ),
                 },
             )
 

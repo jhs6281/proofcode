@@ -1,136 +1,65 @@
-# ProofCode Sandbox Readiness Checklist
+# ProofCode Container Sandbox Readiness Checklist
 
-이 문서는 Step 11 기준 코드 구조를 점검한 결과입니다.
+Step 12에서는 **코드 구현 상태**와 **사용자 컴퓨터에서의 실제 실행 검증 상태**를 분리합니다.
 
-상태:
+- `[x]` 코드로 구현됨
+- `[ ]` 사용자 환경에서 실제 검증 필요
 
-- `[x]` 현재 요구 수준 충족
-- `[~]` 일부 구현됐지만 보안 Sandbox 요구 수준에는 부족
-- `[ ]` 아직 구현되지 않음
+## 코드 구현 체크
 
-## 현재 상태
+- [x] 컨테이너 내부 실행
+- [x] 네트워크 접근 제한 (`--network none`)
+- [x] CPU 사용 제한 (`--cpus`)
+- [x] 메모리 사용 제한 (`--memory`, 동일한 `--memory-swap`)
+- [x] 실행 시간 제한과 강제 종료
+- [x] 원본 Workspace 미마운트
+- [x] 임시 Workspace만 쓰기 가능
+- [x] Root filesystem 읽기 전용
+- [x] Linux capability 전체 제거
+- [x] 권한 상승 차단 (`no-new-privileges`)
+- [x] PID 개수 제한
+- [x] 컨테이너 삭제 후 존재 여부 확인
+- [x] 임시 폴더 삭제 후 존재 여부 확인
+- [x] stdout, stderr, exit code 기록
+- [x] timeout, OOMKilled, container error 기록
+- [x] image ID와 repo digest 기록
+- [x] 실패 시 AI 실행 파이프라인 차단
 
-### [ ] 컨테이너 내부 실행
+## 사용자 환경 실행 체크
 
-현재 Candidate와 Benchmark는 임시 폴더 복사본에서 실행됩니다.
+아래 항목은 실제 컴퓨터에서 `ProofCode: Verify Container Sandbox`를 실행한 뒤 확인합니다.
 
-```text
-임시 폴더 격리
-≠
-컨테이너 격리
-```
+- [ ] Docker CLI 감지
+- [ ] Docker daemon 연결
+- [ ] ProofCode Sandbox image 감지
+- [ ] 컨테이너 생성 성공
+- [ ] 네트워크 `none` 적용
+- [ ] CPU 1.0 제한 적용
+- [ ] 메모리 512MB 제한 적용
+- [ ] 실행 timeout 60초 적용
+- [ ] 원본 Workspace 변경 없음
+- [ ] Sandbox 소스 변경 없음
+- [ ] OOMKilled와 종료 원인 확인
+- [ ] 컨테이너 삭제 확인
+- [ ] 임시 폴더 삭제 확인
+- [ ] Sandbox Evidence JSON 저장
+- [ ] 전체 판정 `passed`
 
-Docker 또는 호환 컨테이너 런타임 연결이 필요합니다.
+## 통과 조건
 
-### [ ] 네트워크 접근 제한
-
-현재 subprocess는 사용자 컴퓨터의 네트워크를 그대로 사용할 수 있습니다.
-
-필요한 목표:
-
-```text
-기본값: 네트워크 없음
-명시적으로 허용한 경우에만 제한적 접근
-```
-
-### [ ] CPU 사용 제한
-
-현재 CPU 코어와 사용량 제한이 없습니다.
-
-필요한 목표 예:
-
-```text
---cpus 1.0
-```
-
-### [ ] 메모리 사용 제한
-
-현재 프로세스 메모리 제한이 없습니다.
-
-필요한 목표 예:
-
-```text
---memory 512m
---memory-swap 512m
-```
-
-### [~] 실행 시간 제한
-
-현재 Python subprocess timeout이 있습니다.
-
-부족한 점:
-
-- 자식 프로세스 전체가 확실히 종료되는지 보장하지 못함
-- 컨테이너 강제 종료 원인 분류 없음
-- 단계별 timeout 정책 없음
-
-Step 12에서 컨테이너 자체 timeout과 강제 삭제를 추가해야 합니다.
-
-### [~] 원본 Workspace 쓰기 방지
-
-현재 원본을 임시 폴더로 복사하고 해시 변화도 검사합니다.
-
-부족한 점:
-
-- 원본 Workspace를 읽기 전용 mount로 강제하지 않음
-- 실행 코드가 절대 경로로 원본에 접근할 가능성을 OS 수준에서 막지 않음
-- 사용자 홈 디렉터리 등 다른 경로 접근도 제한하지 않음
-
-Step 12 목표:
+다음 리포트가 나와야 AI Provider 단계로 넘어갈 수 있습니다.
 
 ```text
-원본 Workspace: read-only mount
-실행 Workspace: 별도 writable volume
-호스트 다른 경로: mount하지 않음
+컨테이너 내부 실행            ✅
+네트워크 접근 제한            ✅
+CPU 사용 제한                 ✅
+메모리 사용 제한              ✅
+실행 시간 제한                ✅
+원본 Workspace 쓰기 방지      ✅
+임시 환경 완전 삭제 확인      ✅
+실행 로그와 종료 원인 기록    ✅
+
+종합 판정: 통과
 ```
 
-### [~] 임시 환경 완전 삭제 확인
-
-현재 `TemporaryDirectory`가 정상 종료 시 임시 폴더를 삭제합니다.
-
-부족한 점:
-
-- 비정상 종료 뒤 잔여 폴더 검사 없음
-- 삭제 실패 로그 없음
-- 재시작 시 잔여 환경 청소 없음
-
-Step 12에서 삭제 후 존재 여부 검사와 잔여 환경 정리를 추가해야 합니다.
-
-### [~] 실행 로그와 종료 원인 기록
-
-현재 기록되는 값:
-
-- stdout
-- stderr
-- exit code
-- timeout 여부
-- 실행 시간
-- 소스 해시 변화
-
-아직 필요한 값:
-
-- container id
-- container exit code
-- OOMKilled 여부
-- timeout에 의한 강제 종료
-- 네트워크 정책
-- CPU/메모리 제한값
-- 임시 환경 삭제 결과
-- Sandbox 준비 실패 원인
-
-## Step 12 통과 기준
-
-아래 항목이 모두 `[x]`가 되기 전에는 AI가 생성한 코드를 자동 실행하지 않습니다.
-
-- [ ] 컨테이너 런타임 감지
-- [ ] 컨테이너 이미지 고정 또는 digest 기록
-- [ ] 네트워크 기본 차단
-- [ ] CPU 제한
-- [ ] 메모리 및 swap 제한
-- [ ] 컨테이너 timeout 및 강제 종료
-- [ ] 원본 Workspace read-only mount
-- [ ] 실행용 writable 복사본 분리
-- [ ] 호스트 임의 경로 미노출
-- [ ] 컨테이너 종료 사유 기록
-- [ ] 임시 컨테이너와 volume 삭제 확인
-- [ ] 실패 시 AI 실행 파이프라인 차단
+하나라도 실패하면 AI가 생성한 코드를 자동 실행하지 않습니다.
