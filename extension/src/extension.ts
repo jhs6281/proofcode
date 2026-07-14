@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 
 import {
+  CandidateBenchmarkResult,
   CandidateEvidenceSummary,
   CandidateVerificationResult,
   CodeSymbol,
@@ -599,6 +600,139 @@ function evidenceQuickPickLabel(
     `${verdictLabel(evidence.verdict)} · `
     + evidence.target_relative_path
   );
+}
+
+
+
+function observedChangeLabel(
+  change: CandidateBenchmarkResult["observed_change"]
+): string {
+  if (change === "faster") {
+    return "Candidate가 더 빠르게 관측됨";
+  }
+
+  if (change === "slower") {
+    return "Candidate가 더 느리게 관측됨";
+  }
+
+  if (change === "similar") {
+    return "유사한 범위로 관측됨";
+  }
+
+  return "비교 불가";
+}
+
+
+function formatBenchmarkDurations(
+  result: CandidateBenchmarkResult,
+  subject: "baseline" | "candidate"
+): string {
+  return result.runs
+    .filter(
+      (run) =>
+        run.subject === subject
+        && !run.warmup
+    )
+    .map(
+      (run) =>
+        `${run.round_number}회: ${run.duration_seconds}초`
+    )
+    .join(", ");
+}
+
+
+function formatBenchmarkReport(
+  result: CandidateBenchmarkResult
+): string {
+  const verdict = result.verdict === "reviewable"
+    ? "✅ 반복 검증 완료"
+    : result.verdict === "failed"
+      ? "❌ Candidate 테스트 실패"
+      : "⛔ Benchmark 중단";
+
+  const percent = result.observed_percent_change === null
+    ? "계산 불가"
+    : `${result.observed_percent_change}%`;
+
+  const ratio = result.median_ratio === null
+    ? "계산 불가"
+    : `${result.median_ratio}배`;
+
+  return [
+    "# ProofCode Candidate Benchmark",
+    "",
+    "## 판정",
+    "",
+    `- 상태: **${verdict}**`,
+    `- 설명: ${result.message}`,
+    `- 관측 결과: **${observedChangeLabel(result.observed_change)}**`,
+    `- 측정 횟수: ${result.measured_runs}회`,
+    `- Warm-up: ${result.warmup_runs}회`,
+    "",
+    "## 중앙값 비교",
+    "",
+    `- Baseline 중앙값: ${result.baseline_stats.median_seconds}초`,
+    `- Candidate 중앙값: ${result.candidate_stats.median_seconds}초`,
+    `- 시간 차이: ${result.median_delta_seconds}초`,
+    `- 시간 비율: ${ratio}`,
+    `- 관측 변화율: ${percent}`,
+    "",
+    "## Baseline 통계",
+    "",
+    `- 평균: ${result.baseline_stats.mean_seconds}초`,
+    `- 최소: ${result.baseline_stats.minimum_seconds}초`,
+    `- 최대: ${result.baseline_stats.maximum_seconds}초`,
+    `- 표준편차: ${result.baseline_stats.standard_deviation_seconds}초`,
+    `- 개별 측정: ${formatBenchmarkDurations(result, "baseline")}`,
+    "",
+    "## Candidate 통계",
+    "",
+    `- 평균: ${result.candidate_stats.mean_seconds}초`,
+    `- 최소: ${result.candidate_stats.minimum_seconds}초`,
+    `- 최대: ${result.candidate_stats.maximum_seconds}초`,
+    `- 표준편차: ${result.candidate_stats.standard_deviation_seconds}초`,
+    `- 개별 측정: ${formatBenchmarkDurations(result, "candidate")}`,
+    "",
+    "## 비교 조건",
+    "",
+    "- Baseline과 Candidate를 서로 다른 임시 Workspace에 복사했습니다.",
+    "- 측정 순서를 번갈아 실행해 실행 순서 영향을 줄였습니다.",
+    `- 원본 Workspace 변경: ${
+      result.workspace_changed_during_run
+        ? "감지됨"
+        : "없음"
+    }`,
+    `- Baseline 임시 소스 변경: ${
+      result.baseline_copy_changed_during_run
+        ? "감지됨"
+        : "없음"
+    }`,
+    `- Candidate 임시 소스 변경: ${
+      result.candidate_copy_changed_during_run
+        ? "감지됨"
+        : "없음"
+    }`,
+    "",
+    "## 대상과 Evidence",
+    "",
+    `- 대상 파일: \`${result.target_relative_path}\``,
+    `- Candidate: \`${result.candidate_path}\``,
+    `- Candidate SHA-256: \`${result.candidate_sha256}\``,
+    `- Candidate Evidence: \`${result.candidate_evidence_path}\``,
+    `- Benchmark Evidence: \`${result.evidence_path ?? "없음"}\``,
+    `- 실행 명령: \`${result.command.join(" ")}\``,
+    `- Python: \`${result.interpreter_path}\``,
+    "",
+    "## 해석 주의",
+    "",
+    "- 이 값은 전체 테스트 명령의 실행 시간입니다.",
+    "- 특정 함수 하나의 순수 실행 속도는 아닙니다.",
+    "- 5% 이내 또는 0.01초 미만 차이는 유사한 범위로 처리합니다.",
+    "- 성능이 빨라 보여도 테스트 통과와 코드 리뷰가 먼저입니다.",
+    "",
+    `> 격리 범위: \`${result.security_scope}\``,
+    "> ProofCode는 Benchmark 결과만으로 코드를 자동 적용하지 않습니다."
+  ].join("\n");
 }
 
 
@@ -1213,6 +1347,102 @@ export function activate(
       }
     );
 
+
+  const benchmarkCandidateCommand =
+    vscode.commands.registerCommand(
+      "proofcode.benchmarkCandidate",
+      async () => {
+        try {
+          const evidenceResponse =
+            await createClient().listCandidateEvidence();
+          const evidenceList =
+            evidenceResponse.data?.candidate_evidence ?? [];
+          const reviewable = evidenceList.filter(
+            (item) =>
+              item.verdict === "reviewable"
+              && item.passed
+          );
+
+          if (reviewable.length === 0) {
+            void vscode.window.showInformationMessage(
+              "Benchmark할 reviewable Candidate가 없습니다. " +
+              "먼저 Candidate 파일을 검증하세요."
+            );
+            return;
+          }
+
+          const selected =
+            await vscode.window.showQuickPick(
+              reviewable.map((evidence) => ({
+                label:
+                  `${evidence.target_relative_path} · ` +
+                  evidence.candidate_sha256.slice(0, 12),
+                description:
+                  evidence.created_at_utc || "시간 정보 없음",
+                detail: evidence.message,
+                evidence
+              })),
+              {
+                title: "Benchmark할 Candidate 선택",
+                placeHolder:
+                  "반복 비교할 Candidate Evidence를 선택하세요.",
+                matchOnDescription: true,
+                matchOnDetail: true
+              }
+            );
+
+          if (!selected) {
+            return;
+          }
+
+          const config =
+            vscode.workspace.getConfiguration("proofcode");
+          const measuredRuns = config.get<number>(
+            "benchmarkRuns",
+            5
+          );
+          const warmupRuns = config.get<number>(
+            "benchmarkWarmups",
+            1
+          );
+
+          const response =
+            await vscode.window.withProgress(
+              {
+                location:
+                  vscode.ProgressLocation.Notification,
+                title:
+                  `ProofCode Benchmark 실행 중 ` +
+                  `(${measuredRuns}회)…`,
+                cancellable: false
+              },
+              () => createClient().benchmarkCandidate(
+                selected.evidence.evidence_path,
+                measuredRuns,
+                warmupRuns
+              )
+            );
+
+          const result =
+            response.data?.candidate_benchmark;
+
+          if (!result) {
+            throw new Error(
+              "Candidate Benchmark 데이터가 없습니다."
+            );
+          }
+
+          await showMarkdown(
+            formatBenchmarkReport(result)
+          );
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Candidate Benchmark 실패: ${String(error)}`
+          );
+        }
+      }
+    );
+
   context.subscriptions.push(
     pingCommand,
     analyzeFileCommand,
@@ -1222,7 +1452,8 @@ export function activate(
     verifyBaselineCommand,
     verifyCandidateCommand,
     recordDecisionCommand,
-    viewDecisionHistoryCommand
+    viewDecisionHistoryCommand,
+    benchmarkCandidateCommand
   );
 }
 

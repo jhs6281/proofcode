@@ -212,6 +212,61 @@ export interface DecisionSummary {
   workspace_matches_candidate_context: boolean;
 }
 
+export interface BenchmarkRun {
+  subject: "baseline" | "candidate";
+  round_number: number;
+  warmup: boolean;
+  duration_seconds: number;
+  exit_code: number | null;
+  timed_out: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+export interface BenchmarkStats {
+  runs: number;
+  mean_seconds: number;
+  median_seconds: number;
+  minimum_seconds: number;
+  maximum_seconds: number;
+  standard_deviation_seconds: number;
+}
+
+export interface CandidateBenchmarkResult {
+  verdict: "reviewable" | "failed" | "blocked";
+  observed_change:
+    | "faster"
+    | "slower"
+    | "similar"
+    | "not_comparable";
+  message: string;
+  measured_runs: number;
+  warmup_runs: number;
+  target_relative_path: string;
+  candidate_path: string;
+  candidate_sha256: string;
+  candidate_evidence_path: string;
+  candidate_evidence_sha256: string;
+  baseline_fingerprint: string;
+  workspace_fingerprint_before: string;
+  workspace_fingerprint_after: string;
+  workspace_changed_during_run: boolean;
+  baseline_copy_changed_during_run: boolean;
+  candidate_copy_changed_during_run: boolean;
+  baseline_stats: BenchmarkStats;
+  candidate_stats: BenchmarkStats;
+  median_delta_seconds: number;
+  median_ratio: number | null;
+  observed_percent_change: number | null;
+  command: string[];
+  working_directory: string;
+  interpreter_path: string;
+  runs: BenchmarkRun[];
+  evidence_saved: boolean;
+  evidence_path: string | null;
+  security_scope: string;
+}
+
 export function resolvePythonPath(
   configuredPath: string,
   workspaceRoot: string
@@ -416,6 +471,28 @@ export class CoreClient {
       "read-decision",
       this.workspaceRoot,
       decisionPath
+    ]);
+  }
+
+  public benchmarkCandidate(
+    evidencePath: string,
+    measuredRuns: number,
+    warmupRuns: number
+  ): Promise<
+    CoreEnvelope<{
+      candidate_benchmark: CandidateBenchmarkResult;
+    }>
+  > {
+    return this.run([
+      "benchmark-candidate",
+      this.workspaceRoot,
+      evidencePath,
+      "--runs",
+      String(measuredRuns),
+      "--warmups",
+      String(warmupRuns),
+      "--timeout",
+      "60"
     ]);
   }
 

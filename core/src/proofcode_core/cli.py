@@ -6,6 +6,7 @@ import sys
 from typing import Sequence
 
 from proofcode_core.analyzer import analyze_file
+from proofcode_core.benchmark import benchmark_candidate
 from proofcode_core.candidate import verify_candidate_file
 from proofcode_core.contract import (
     error_payload,
@@ -106,6 +107,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     read_decision_parser.add_argument("workspace_path")
     read_decision_parser.add_argument("decision_path")
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark-candidate"
+    )
+    benchmark_parser.add_argument("workspace_path")
+    benchmark_parser.add_argument("evidence_path")
+    benchmark_parser.add_argument(
+        "--runs",
+        type=int,
+        default=5,
+    )
+    benchmark_parser.add_argument(
+        "--warmups",
+        type=int,
+        default=1,
+    )
+    benchmark_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+    )
 
     return parser
 
@@ -246,6 +268,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ),
                         ).to_dict()
                     ),
+                },
+            )
+
+        elif args.command == "benchmark-candidate":
+            payload = success_payload(
+                "candidate_benchmark",
+                {
+                    "candidate_benchmark": benchmark_candidate(
+                        workspace_path=args.workspace_path,
+                        evidence_path=args.evidence_path,
+                        measured_runs=args.runs,
+                        warmup_runs=args.warmups,
+                        timeout_seconds=args.timeout,
+                    ).to_dict(),
                 },
             )
 

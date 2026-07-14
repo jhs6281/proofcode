@@ -2,7 +2,7 @@
   "name": "proofcode",
   "displayName": "ProofCode",
   "description": "Verify code changes with reproducible evidence before developers approve them.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "proofcode",
   "license": "UNLICENSED",
   "engines": {
@@ -20,7 +20,8 @@
     "onCommand:proofcode.verifyBaseline",
     "onCommand:proofcode.verifyCandidateFile",
     "onCommand:proofcode.recordCandidateDecision",
-    "onCommand:proofcode.viewDecisionHistory"
+    "onCommand:proofcode.viewDecisionHistory",
+    "onCommand:proofcode.benchmarkCandidate"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -60,6 +61,10 @@
       {
         "command": "proofcode.viewDecisionHistory",
         "title": "ProofCode: View Decision History"
+      },
+      {
+        "command": "proofcode.benchmarkCandidate",
+        "title": "ProofCode: Benchmark Candidate"
       }
     ],
     "configuration": {
@@ -79,6 +84,20 @@
           "type": "boolean",
           "default": false,
           "description": "Include example and fixture files in hotspot ranking."
+        },
+        "proofcode.benchmarkRuns": {
+          "type": "number",
+          "default": 5,
+          "minimum": 3,
+          "maximum": 30,
+          "description": "Number of measured test runs for each Baseline and Candidate benchmark."
+        },
+        "proofcode.benchmarkWarmups": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Number of warm-up runs before measured benchmarks."
         }
       }
     }
